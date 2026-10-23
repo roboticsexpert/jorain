@@ -1,0 +1,33 @@
+{
+  "name": "second-brain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Personal second brain: task manager + Markdown knowledge base, with headless Claude Code agents working the tasks.",
+  "engines": { "node": ">=25" },
+  "bin": { "brain": "bin/brain.mjs" },
+  "scripts": {
+    "dev": "node --disable-warning=ExperimentalWarning src/server/index.ts",
+    "start": "pnpm -s build && node --disable-warning=ExperimentalWarning dist/server/index.js",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "NODE_OPTIONS=--disable-warning=ExperimentalWarning vitest run",
+    "verify": "node --disable-warning=ExperimentalWarning scripts/verify-e2e.mjs",
+    "spike": "node --disable-warning=ExperimentalWarning scripts/spike-defer.mjs",
+    "brain": "node --disable-warning=ExperimentalWarning bin/brain.mjs"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "commander": "^15.0.0",
+    "hono": "^4.13.13",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "typescript": "^6.0.0",
+    "vitest": "^5.0.5"
+  },
+  "packageManager": "pnpm@10.11.1"
+}

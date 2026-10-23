@@ -1,0 +1,16 @@
+node_modules/
+dist/
+web/dist/
+brain/state.sqlite*
+brain/runs/
+.env
+.DS_Store
+coverage/
+
+# Owner data: never commit (keep only the empty templates)
+brain/projects/*
+!brain/projects/.gitkeep
+brain/knowledge/*
+!brain/knowledge/index.md
+.claude/
+.vitest/
