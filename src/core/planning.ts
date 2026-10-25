@@ -23,7 +23,7 @@ export function createPlanTask(ctx: Ctx, project: string, opts: { focus?: string
   if (open) throw conflict(`project ${project} already has a planner task (${open.id}, ${open.status}); finish or cancel it first`);
   return createTask(
     ctx,
-    { project_slug: project, title: 'Plan next steps', body: opts.focus?.trim() ?? '', kind: 'plan', mode: 'auto', priority: 3, status: 'todo', depends_on: [] },
+    { project_slug: project, title: 'Plan next steps', body: opts.focus?.trim() ?? '', kind: 'plan', priority: 3, status: 'todo', depends_on: [] },
     opts.source ?? 'owner',
   );
 }

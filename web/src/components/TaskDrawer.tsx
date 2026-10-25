@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { BrainEvent, Priority, Question, Run, SyncResult, Task, TaskDetail, TaskMode, TaskStatus } from '../api/types';
+import type { BrainEvent, Priority, Question, Run, SyncResult, Task, TaskDetail, TaskStatus } from '../api/types';
 import { STATUS_LABEL } from '../api/types';
 import { useLive, useReconnect, useSse } from '../live';
 import { errorMessage, fullDate, timeAgo } from '../lib/util';
@@ -14,7 +14,6 @@ import {
   GitBadge,
   WaitingBadge,
   Markdown,
-  ModeBadge,
   PlannerBadge,
   PriorityBadge,
   Spinner,
@@ -152,7 +151,6 @@ function DrawerBody({
           <span className="mono muted">{task.id}</span>
           <span className="muted">· {task.project_slug}</span>
           <StatusBadge status={task.status} />
-          <ModeBadge mode={task.mode} />
           <PriorityBadge priority={task.priority} />
           <PlannerBadge task={task} />
           <GitBadge task={task} />
@@ -485,7 +483,6 @@ function DependencyLink({ id, waiting }: { id: string; waiting: boolean }) {
 function EditTask({ task, onDone, act }: { task: Task; onDone: () => void; act: (fn: () => Promise<Task>, msg: string) => Promise<void> }) {
   const [title, setTitle] = useState(task.title);
   const [body, setBody] = useState(task.body);
-  const [mode, setMode] = useState<TaskMode>(task.mode);
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [deps, setDeps] = useState(task.depends_on.join(', '));
 
@@ -494,7 +491,6 @@ function EditTask({ task, onDone, act }: { task: Task; onDone: () => void; act: 
     const patch: Record<string, unknown> = {};
     if (title.trim() !== task.title) patch.title = title.trim();
     if (body !== task.body) patch.body = body;
-    if (mode !== task.mode) patch.mode = mode;
     if (priority !== task.priority) patch.priority = priority;
     const depList = deps.split(/[\s,]+/).filter(Boolean);
     if ([...depList].sort().join() !== task.depends_on.join()) patch.depends_on = depList;
@@ -513,13 +509,6 @@ function EditTask({ task, onDone, act }: { task: Task; onDone: () => void; act: 
         <textarea rows={10} value={body} onChange={(e) => setBody(e.target.value)} />
       </label>
       <div className="grid3">
-        <label>
-          Mode
-          <select value={mode} onChange={(e) => setMode(e.target.value as TaskMode)}>
-            <option value="auto">auto</option>
-            <option value="assisted">assisted</option>
-          </select>
-        </label>
         <label>
           Priority
           <select value={priority} onChange={(e) => setPriority(Number(e.target.value) as Priority)}>

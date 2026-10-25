@@ -59,7 +59,8 @@ Scheduled tasks (owner's request, 2026-10-23; built in the same session, default
 | D16 | **Schedules queue ordinary tasks.** A schedule is a task template plus a time (`once` at `run_at`, or `recurring` by cron). When due it creates a `todo` task; the normal scheduler, review and Inbox handle the rest. | No second execution path; a check's result is the task's review summary, which already reaches the Inbox. |
 | D17 | **Cron in the server's local time**, own small parser, plus a friendly picker in the UI (hourly / daily / weekdays / days of week / monthly / custom). | One Mac, one time zone; no dependency. |
 | D18 | **Missed times are caught up once**; a recurring time is **skipped while the previous task is still queued or running** (inbox/todo/in_progress/waiting_for_human). A task in review does not block the next run. | Server restarts shouldn't flood the board; slow runs shouldn't pile up; an unread report shouldn't silence a check. |
-| D19 | **A recurring task gets the previous run's result** in its prompt and is asked what changed. Default mode for schedules is `auto`. | "Check whether X happened" is only useful relative to last time. |
+| D19 | **A recurring task gets the previous run's result** in its prompt and is asked what changed. | "Check whether X happened" is only useful relative to last time. |
+| D20 | **No task modes (auto/assisted removed, 2026-10-24).** The column says what happens: `inbox` waits for the owner to read it, `todo` is started by the scheduler. Migration 0006 drops `tasks.mode`, `schedules.mode`, `projects.default_mode`; assisted tasks that were in `todo` went back to the inbox so nothing (e.g. production rollouts) started unasked. | Owner's call: two knobs for one decision was confusing; an assisted task in todo looked queued but never ran. |
 
 ## Open questions for the owner
 

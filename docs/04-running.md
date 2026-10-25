@@ -56,7 +56,7 @@ Run it as `pnpm brain …`, or `pnpm link --global` once and then just `brain �
 ```bash
 brain project add shop -n "Shop backend" -r /Users/me/Projects/shop          # code project (git repo)
 brain project add reading -n "Reading list"                                    # no repo: agent works in brain/projects/reading/
-brain project add shop2 -n "Shop 2" -r /path --model sonnet -t "Bash(pnpm test *)" --mode assisted
+brain project add shop2 -n "Shop 2" -r /path --model sonnet -t "Bash(pnpm test *)"
 brain project list
 ```
 
@@ -80,12 +80,12 @@ brain overview                                                     # every proje
 ### Add a task
 
 ```bash
-brain task add shop "Add a health-check endpoint" --todo            # auto task in todo: the scheduler picks it up
-brain task add shop "Redesign checkout" -b "Talk to me first" -m assisted --todo   # assisted: waits for `brain task start`
+brain task add shop "Add a health-check endpoint" --todo            # todo: the scheduler picks it up
+brain task add shop "Redesign checkout" -b "Talk to me first"   # inbox: waits for you (move to todo or `brain task start`)
 echo "long description" | brain task add shop "Title" -b - -p 3     # body from stdin, high priority
 brain task list                     # newest first; -P <project> -s todo,review
 brain task show <id>                # status, open question, summary, runs with log paths
-brain task start <id>               # start now, any mode (from inbox/todo/blocked/failed)
+brain task start <id>               # start now (from inbox/todo/blocked/failed)
 ```
 
 Without `--todo` a task lands in `inbox` and is not started.
@@ -137,7 +137,7 @@ brain schedule run <id>         # queue its task now (the schedule keeps its nex
 brain schedule off <id> / on <id> / rm <id>
 ```
 
-A schedule is a task template plus a time. When it is due the scheduler creates a `todo` task from it; an auto task runs by itself and lands in review with the agent's report, so checks show up in the Inbox. One-offs turn themselves off after firing. Recurring ones use cron in the server's local time (`min hour day month weekday`, or `@daily`/`@weekly`/…), skip a time while the previous task is still queued or running, and get the previous run's result in their prompt. Missed times while the server was down are caught up with one task. In the web UI: **Schedules** page (friendly repeat picker, or custom cron with a preview of the next runs). For checks that don't touch code, a project without a repo works fine.
+A schedule is a task template plus a time. When it is due the scheduler creates a `todo` task from it; it runs by itself and lands in review with the agent's report, so checks show up in the Inbox. One-offs turn themselves off after firing. Recurring ones use cron in the server's local time (`min hour day month weekday`, or `@daily`/`@weekly`/…), skip a time while the previous task is still queued or running, and get the previous run's result in their prompt. Missed times while the server was down are caught up with one task. In the web UI: **Schedules** page (friendly repeat picker, or custom cron with a preview of the next runs). For checks that don't touch code, a project without a repo works fine.
 
 ### Knowledge
 

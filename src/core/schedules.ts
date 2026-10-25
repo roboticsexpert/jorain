@@ -4,7 +4,7 @@ import { nextCronTime, parseCron } from './cron.ts';
 import { publish, recordEvent } from './events.ts';
 import { getProject } from './projects.ts';
 import { createTask, findTask, type TaskRow } from './tasks.ts';
-import { badRequest, notFound, TASK_MODES, type Priority, type Schedule, type ScheduleKind, type TaskMode, type TaskStatus } from './types.ts';
+import { badRequest, notFound, type Priority, type Schedule, type ScheduleKind, type TaskStatus } from './types.ts';
 
 /**
  * Schedules queue a task from a template at a set time: `once` at `run_at` (e.g. "on 1 Nov check whether
@@ -46,7 +46,6 @@ export interface ScheduleInput {
   project_slug: string;
   title: string;
   body?: string;
-  mode?: TaskMode;
   priority?: Priority;
   kind: ScheduleKind;
   /** once: ISO date-time (with offset or Z) the task is queued at. */
@@ -79,8 +78,6 @@ export function createSchedule(ctx: Ctx, input: ScheduleInput, source = 'owner')
   const project = getProject(ctx, input.project_slug);
   if (typeof input.title !== 'string' || !input.title.trim()) throw badRequest('title is required');
   if (input.body !== undefined && typeof input.body !== 'string') throw badRequest('body must be a string');
-  const mode = input.mode ?? 'auto';
-  if (!TASK_MODES.includes(mode)) throw badRequest('mode must be auto or assisted');
   const priority = input.priority ?? 2;
   if (![1, 2, 3].includes(priority)) throw badRequest('priority must be 1, 2 or 3');
   if (input.kind !== 'once' && input.kind !== 'recurring') throw badRequest('kind must be once or recurring');
@@ -92,10 +89,10 @@ export function createSchedule(ctx: Ctx, input: ScheduleInput, source = 'owner')
   const ts = now();
   ctx.db
     .prepare(
-      `INSERT INTO schedules (id, project_slug, title, body, mode, priority, kind, run_at, cron, enabled, next_run_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO schedules (id, project_slug, title, body, priority, kind, run_at, cron, enabled, next_run_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, project.slug, input.title.trim(), input.body ?? '', mode, priority, input.kind, run_at, cron, enabled ? 1 : 0, next, ts, ts);
+    .run(id, project.slug, input.title.trim(), input.body ?? '', priority, input.kind, run_at, cron, enabled ? 1 : 0, next, ts, ts);
   recordEvent(ctx, null, 'schedule.created', { id, project: project.slug, source });
   return emit(ctx, id);
 }
@@ -112,10 +109,6 @@ export function updateSchedule(ctx: Ctx, id: string, patch: SchedulePatch): Sche
   if (patch.body !== undefined) {
     if (typeof patch.body !== 'string') throw badRequest('body must be a string');
     next.body = patch.body;
-  }
-  if (patch.mode !== undefined) {
-    if (!TASK_MODES.includes(patch.mode)) throw badRequest('mode must be auto or assisted');
-    next.mode = patch.mode;
   }
   if (patch.priority !== undefined) {
     if (![1, 2, 3].includes(patch.priority)) throw badRequest('priority must be 1, 2 or 3');
@@ -142,9 +135,9 @@ export function updateSchedule(ctx: Ctx, id: string, patch: SchedulePatch): Sche
   next.next_run_at = computeNext(next, new Date());
   ctx.db
     .prepare(
-      `UPDATE schedules SET title = ?, body = ?, mode = ?, priority = ?, kind = ?, run_at = ?, cron = ?, enabled = ?, next_run_at = ?, run_count = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE schedules SET title = ?, body = ?, priority = ?, kind = ?, run_at = ?, cron = ?, enabled = ?, next_run_at = ?, run_count = ?, updated_at = ? WHERE id = ?`,
     )
-    .run(next.title, next.body, next.mode, next.priority, next.kind, next.run_at, next.cron, next.enabled ? 1 : 0, next.next_run_at, next.run_count, now(), id);
+    .run(next.title, next.body, next.priority, next.kind, next.run_at, next.cron, next.enabled ? 1 : 0, next.next_run_at, next.run_count, now(), id);
   recordEvent(ctx, null, 'schedule.edited', { id, ...patch });
   return emit(ctx, id);
 }
@@ -192,7 +185,7 @@ export function fireSchedule(ctx: Ctx, id: string, opts: { at?: Date; manual?: b
   }
   const task = createTask(
     ctx,
-    { project_slug: s.project_slug, title: s.title, body: taskBody(s, at, previous), mode: s.mode, priority: s.priority, status: 'todo', depends_on: [] },
+    { project_slug: s.project_slug, title: s.title, body: taskBody(s, at, previous), priority: s.priority, status: 'todo', depends_on: [] },
     `schedule:${s.id}`,
   );
   ctx.db.prepare('UPDATE tasks SET schedule_id = ? WHERE id = ?').run(s.id, task.id);

@@ -51,7 +51,7 @@ const localTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString('s
 
 function formatSchedule(s: Schedule): string {
   const when = s.kind === 'once' ? `once at ${localTime(s.run_at)}` : `cron "${s.cron}"`;
-  return `${s.id}  ${s.enabled ? 'on ' : 'off'}  ${s.project_slug}  ${when}  next ${localTime(s.next_run_at)}  runs ${s.run_count}${s.last_task_id ? ` (last ${s.last_task_id})` : ''}  ${s.mode}  ${s.title}`;
+  return `${s.id}  ${s.enabled ? 'on ' : 'off'}  ${s.project_slug}  ${when}  next ${localTime(s.next_run_at)}  runs ${s.run_count}${s.last_task_id ? ` (last ${s.last_task_id})` : ''}  ${s.title}`;
 }
 
 function formatQuestion(q: Question): string {
@@ -128,7 +128,7 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
 
   server.registerTool(
     'list_projects',
-    { description: 'All registered projects with their repo path, default task mode, model and push policy.', inputSchema: {} },
+    { description: 'All registered projects with their repo path, model and push policy.', inputSchema: {} },
     tool(() => json(listProjects(ctx))),
   );
 
@@ -141,13 +141,12 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
         slug: z.string().min(1).describe('Short lowercase id, e.g. "shop".'),
         name: z.string().min(1),
         repo_path: z.string().optional(),
-        default_mode: z.enum(['auto', 'assisted']).optional().describe('auto: the scheduler starts todo tasks itself; assisted: they wait for start_task.'),
         model: z.string().optional(),
         push_policy: z.enum(['never', 'after_merge']).optional(),
       },
     },
-    tool(({ slug, name, repo_path, default_mode, model, push_policy }) => {
-      const p = createProject(ctx, { slug, name, repo_path: repo_path ?? null, default_mode, model: model ?? null, allowed_tools: [], push_policy });
+    tool(({ slug, name, repo_path, model, push_policy }) => {
+      const p = createProject(ctx, { slug, name, repo_path: repo_path ?? null, model: model ?? null, allowed_tools: [], push_policy });
       return text(`Created project ${p.slug}${p.repo_path ? ` → ${p.repo_path}` : ''}. Fill in its goal and constraints in ${projectDir(ctx, p.slug)}/PROJECT.md.`);
     }),
   );
@@ -262,14 +261,13 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
     'add_schedule',
     {
       description:
-        "Schedule a task: kind 'once' queues it at run_at (e.g. \"on 1 Nov check whether the payment arrived\"), kind 'recurring' every time cron matches (e.g. \"every Monday check the error log\"). When due, a todo task is created in the project; auto tasks start by themselves and land in review with the agent's report. A recurring task's prompt includes the previous run's result. project defaults to this directory's project.",
+        "Schedule a task: kind 'once' queues it at run_at (e.g. \"on 1 Nov check whether the payment arrived\"), kind 'recurring' every time cron matches (e.g. \"every Monday check the error log\"). When due, a todo task is created in the project; it starts by itself and lands in review with the agent's report. A recurring task's prompt includes the previous run's result. project defaults to this directory's project.",
       inputSchema: {
         title: z.string().min(1),
         body: z.string().optional().describe('What the agent should do or check, and what to report.'),
         project: z.string().optional(),
         kind: z.enum(['once', 'recurring']),
         ...timing,
-        mode: z.enum(['auto', 'assisted']).optional().describe('auto (default) runs by itself; assisted waits for the owner to start it.'),
         priority: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
       },
     },
@@ -279,14 +277,13 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
   server.registerTool(
     'update_schedule',
     {
-      description: 'Edit a schedule: title, body, timing (kind, run_at, cron), mode, priority, or turn it on/off with enabled. A new run_at re-arms a one-off that already ran.',
+      description: 'Edit a schedule: title, body, timing (kind, run_at, cron), priority, or turn it on/off with enabled. A new run_at re-arms a one-off that already ran.',
       inputSchema: {
         id: z.string(),
         title: z.string().optional(),
         body: z.string().optional(),
         kind: z.enum(['once', 'recurring']).optional(),
         ...timing,
-        mode: z.enum(['auto', 'assisted']).optional(),
         priority: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
         enabled: z.boolean().optional(),
       },
@@ -309,7 +306,7 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
     tool(({ id }) => {
       const r = fireSchedule(ctx, id, { manual: true });
       if (r.status === 'skipped') return fail(r.reason);
-      return text(`Queued ${r.task.id} [${r.task.status}] ${r.task.title}${r.task.mode === 'auto' ? '; the scheduler starts it within seconds when the server runs.' : ''}`);
+      return text(`Queued ${r.task.id} [${r.task.status}] ${r.task.title}; the scheduler starts it within seconds when the server runs.`);
     }),
   );
 
@@ -334,7 +331,7 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
     tool(({ project, status }) => {
       const tasks = listTasks(ctx, { project: project === 'current' ? projectSlug(undefined) : project, status: status as any });
       if (!tasks.length) return text('No tasks.');
-      return text(tasks.map((t) => `${t.id}  ${t.status}  ${t.project_slug}  ${t.kind === 'plan' ? 'planner  ' : ''}${t.mode}  p${t.priority}${t.milestone_id ? `  ${t.milestone_id}` : ''}  ${t.title}`).join('\n'));
+      return text(tasks.map((t) => `${t.id}  ${t.status}  ${t.project_slug}  ${t.kind === 'plan' ? 'planner  ' : ''}p${t.priority}${t.milestone_id ? `  ${t.milestone_id}` : ''}  ${t.title}`).join('\n'));
     }),
   );
 
@@ -353,33 +350,31 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
     'add_task',
     {
       description:
-        "Add a task. project defaults to this directory's project. Lands in the inbox (not started) unless todo is true; an auto task in todo is picked up by the scheduler within seconds.",
+        "Add a task. project defaults to this directory's project. Lands in the inbox (not started) unless todo is true; a todo task is picked up by the scheduler within seconds.",
       inputSchema: {
         title: z.string().min(1),
         body: z.string().optional().describe('Markdown description: what to do, acceptance criteria, pointers.'),
         project: z.string().optional(),
-        mode: z.enum(['auto', 'assisted']).optional(),
         priority: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().describe('1 low, 2 normal, 3 high'),
         todo: z.boolean().optional(),
         depends_on: z.array(z.string()).optional().describe('Task ids this one needs: it is not started until each is approved and merged.'),
         milestone: z.string().optional().describe("Id or title of one of the project's milestones."),
       },
     },
-    tool(({ title, body, project, mode, priority, todo, depends_on, milestone }) => {
-      const t = createTask(ctx, { project_slug: projectSlug(project), title, body, mode, priority, status: todo ? 'todo' : 'inbox', depends_on, milestone });
-      return text(`Created ${t.id} [${t.status}] in ${t.project_slug} (${t.mode}): ${t.title}`);
+    tool(({ title, body, project, priority, todo, depends_on, milestone }) => {
+      const t = createTask(ctx, { project_slug: projectSlug(project), title, body, priority, status: todo ? 'todo' : 'inbox', depends_on, milestone });
+      return text(`Created ${t.id} [${t.status}] in ${t.project_slug}: ${t.title}`);
     }),
   );
 
   server.registerTool(
     'update_task',
     {
-      description: 'Edit a task: title, body, mode, priority, milestone (id or title; null clears), its dependencies (replaces the list), or move it between inbox, todo and blocked by hand.',
+      description: 'Edit a task: title, body, priority, milestone (id or title; null clears), its dependencies (replaces the list), or move it between inbox, todo and blocked by hand.',
       inputSchema: {
         id: z.string(),
         title: z.string().optional(),
         body: z.string().optional(),
-        mode: z.enum(['auto', 'assisted']).optional(),
         priority: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
         status: z.enum(['inbox', 'todo', 'blocked']).optional(),
         depends_on: z.array(z.string()).optional(),
@@ -394,7 +389,7 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
 
   server.registerTool(
     'start_task',
-    { description: 'Start an agent session for a task now, in any mode (from inbox, todo, blocked or failed). Needs the server.', inputSchema: { id: z.string() } },
+    { description: 'Start an agent session for a task now (from inbox, todo, blocked or failed). Needs the server.', inputSchema: { id: z.string() } },
     tool(async ({ id }) => {
       const t = await viaServer('POST', `/tasks/${id}/start`);
       return text(`${t.id} is ${t.status}. Follow it with get_task.`);

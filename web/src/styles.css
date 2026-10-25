@@ -256,16 +256,6 @@ input:disabled {
   border: 1px solid var(--border);
   white-space: nowrap;
 }
-.mode-auto {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: transparent;
-}
-.mode-assisted {
-  background: var(--warn-soft);
-  color: var(--warn);
-  border-color: transparent;
-}
 .prio-3 {
   background: var(--danger-soft);
   color: var(--danger);
@@ -1288,10 +1278,6 @@ button:active:not(:disabled) {
 .badge {
   line-height: 18px;
   padding: 0 8px;
-}
-.mode-assisted {
-  background: var(--pink-soft);
-  color: var(--pink);
 }
 .status-review {
   background: var(--pink-soft);

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { Priority, Project, Schedule, ScheduleKind, TaskMode } from '../api/types';
-import { ConfirmButton, Empty, ErrorBox, ModeBadge, Modal, PriorityBadge, Spinner } from '../components/ui';
+import type { Priority, Project, Schedule, ScheduleKind } from '../api/types';
+import { ConfirmButton, Empty, ErrorBox, Modal, PriorityBadge, Spinner } from '../components/ui';
 import { useLive, useReconnect, useSse } from '../live';
 import { cx, errorMessage, fullDate, timeAgo } from '../lib/util';
 
@@ -233,7 +233,6 @@ function ScheduleCard({
           {s.kind === 'once' ? '📅' : '🔁'}
         </span>
         <b className="sched-title">{s.title}</b>
-        <ModeBadge mode={s.mode} />
         {s.priority !== 2 && <PriorityBadge priority={s.priority} />}
         <span className="grow" />
         <label className="switch" title={s.enabled ? 'On: queues tasks on time' : 'Off'}>
@@ -316,7 +315,6 @@ function ScheduleModal({
   const [slug, setSlug] = useState(initial?.project_slug ?? (active.some((p) => p.slug === defaultProject) ? defaultProject! : (active[0]?.slug ?? '')));
   const [title, setTitle] = useState(initial?.title ?? '');
   const [body, setBody] = useState(initial?.body ?? '');
-  const [mode, setMode] = useState<TaskMode>(initial?.mode ?? 'auto');
   const [priority, setPriority] = useState<Priority>(initial?.priority ?? 2);
   const [kind, setKind] = useState<ScheduleKind>(initial?.kind ?? 'once');
   const [runAt, setRunAt] = useState(toLocalInput(initial?.run_at ?? null));
@@ -346,7 +344,7 @@ function ScheduleModal({
     setBusy(true);
     const timing = kind === 'once' ? { kind, run_at: new Date(runAt).toISOString() } : { kind, cron };
     try {
-      const fields = { title: title.trim(), body, mode, priority, ...timing };
+      const fields = { title: title.trim(), body, priority, ...timing };
       onSaved(initial ? await api.updateSchedule(initial.id, fields) : await api.createSchedule({ project_slug: slug, ...fields }));
     } catch (err) {
       toastError(err);
@@ -483,13 +481,6 @@ function ScheduleModal({
           )}
 
           <div className="grid3">
-            <label>
-              Mode
-              <select value={mode} onChange={(e) => setMode(e.target.value as TaskMode)}>
-                <option value="auto">auto: runs by itself</option>
-                <option value="assisted">assisted: waits for you</option>
-              </select>
-            </label>
             <label>
               Priority
               <select value={priority} onChange={(e) => setPriority(Number(e.target.value) as Priority)}>

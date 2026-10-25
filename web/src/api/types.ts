@@ -1,6 +1,5 @@
 // Mirrors docs/05-api-contract.md. Change the contract first, then this file.
 
-export type TaskMode = 'auto' | 'assisted';
 export type TaskStatus =
   | 'inbox'
   | 'todo'
@@ -20,7 +19,6 @@ export interface Project {
   slug: string;
   name: string;
   repo_path: string | null;
-  default_mode: TaskMode;
   model: string | null;
   allowed_tools: string[];
   push_policy: PushPolicy;
@@ -38,7 +36,6 @@ export interface Task {
   project_slug: string;
   title: string;
   body: string;
-  mode: TaskMode;
   status: TaskStatus;
   priority: Priority;
   branch: string | null;
@@ -83,7 +80,6 @@ export interface Schedule {
   project_slug: string;
   title: string;
   body: string;
-  mode: TaskMode;
   priority: Priority;
   kind: ScheduleKind;
   run_at: string | null;
@@ -101,7 +97,6 @@ export interface NewSchedule {
   project_slug: string;
   title: string;
   body?: string;
-  mode?: TaskMode;
   priority?: Priority;
   kind: ScheduleKind;
   run_at?: string | null;
@@ -239,7 +234,6 @@ export interface NewProject {
   slug: string;
   name: string;
   repo_path?: string | null;
-  default_mode?: TaskMode;
   model?: string | null;
   allowed_tools?: string[];
   push_policy?: PushPolicy;
@@ -254,7 +248,6 @@ export type ProjectPatch = Partial<
     Project,
     | 'name'
     | 'repo_path'
-    | 'default_mode'
     | 'model'
     | 'allowed_tools'
     | 'push_policy'
@@ -279,7 +272,6 @@ export interface NewTask {
   project_slug: string;
   title: string;
   body?: string;
-  mode?: TaskMode;
   priority?: Priority;
   status?: 'inbox' | 'todo';
   depends_on?: string[];
@@ -287,7 +279,7 @@ export interface NewTask {
   milestone?: string;
 }
 
-export type TaskPatch = Partial<Pick<Task, 'title' | 'body' | 'mode' | 'priority' | 'status' | 'depends_on'>> & {
+export type TaskPatch = Partial<Pick<Task, 'title' | 'body' | 'priority' | 'status' | 'depends_on'>> & {
   /** Milestone id or title; null removes the task from its milestone. */
   milestone?: string | null;
 };

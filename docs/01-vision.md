@@ -13,7 +13,7 @@ A personal "second brain" that stores my knowledge, lets me talk to it from the 
 - I define projects. Each project has a task list (a task manager).
 - Claude tries to move projects forward on its own.
 - When it needs me (read something, approve/reject, answer a question, or talk inside the session), it asks me on a channel and **waits** until I reply.
-- Tasks are either **automatic** (Claude can do them end to end) or **assisted** (needs me). Assisted tasks stay parked until I respond.
+- The column decides who acts: a task in **Inbox** waits for me to read it; a task in **Todo** gets done by Claude without asking. (There used to be an auto/assisted mode; it was removed on 2026-10-24.)
 - Each project will eventually have its own stages, but to start every project uses one simple board: Inbox → Todo → In Progress → Done (plus whatever is needed for "waiting on me").
 
 ### Knowledge base

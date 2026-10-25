@@ -1,7 +1,7 @@
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { Milestone, Priority, Task, TaskMode, TaskStatus } from '../api/types';
+import type { Milestone, Priority, Task, TaskStatus } from '../api/types';
 import { PRIORITY_LABEL, STATUS_LABEL } from '../api/types';
 import { cx } from '../lib/util';
 
@@ -61,14 +61,6 @@ export function StatusEmoji({ status }: { status: TaskStatus }) {
   return (
     <span className={cx('emoji', `emoji-${status}`)} aria-hidden="true">
       {STATUS_EMOJI[status]}
-    </span>
-  );
-}
-
-export function ModeBadge({ mode }: { mode: TaskMode }) {
-  return (
-    <span className={`badge mode-${mode}`} title={mode === 'auto' ? 'Claude can do it end to end' : 'Needs you'}>
-      {mode === 'auto' ? '⚡' : '🤝'} {mode}
     </span>
   );
 }

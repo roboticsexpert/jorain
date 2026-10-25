@@ -118,13 +118,12 @@ export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }
         title: z.string().min(1),
         body: z.string().optional().describe('What to do, why, and how to tell it is done (acceptance criteria).'),
         project: z.string().optional(),
-        mode: z.enum(['auto', 'assisted']).optional().describe('auto: an agent can do it alone; assisted: it needs the owner (decisions, credentials, production).'),
         priority: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().describe('1 low, 2 normal (default), 3 high.'),
         milestone: z.string().optional(),
         depends_on: z.array(z.string()).optional(),
       },
     },
-    async ({ title, body, project, mode, priority, milestone, depends_on }) => {
+    async ({ title, body, project, priority, milestone, depends_on }) => {
       const slug = project ?? env.project;
       if (!slug || !findProject(ctx, slug)) return fail(`Unknown project ${slug ?? '(none)'}.`);
       const cur = currentTask();
@@ -133,7 +132,7 @@ export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }
         () =>
           createTask(
             ctx,
-            { project_slug: slug, title, body: `${body ?? ''}${env.taskId ? `\n\n_Created by the agent working on ${env.taskId}._` : ''}`, mode, priority, milestone, status: 'inbox', depends_on: deps },
+            { project_slug: slug, title, body: `${body ?? ''}${env.taskId ? `\n\n_Created by the agent working on ${env.taskId}._` : ''}`, priority, milestone, status: 'inbox', depends_on: deps },
             env.taskId ? `agent:${env.taskId}` : 'agent',
           ),
         (t) => `Created task ${t.id} in ${slug} (inbox)${t.milestone_id ? `, milestone ${t.milestone_id}` : ''}${t.depends_on.length ? `, depending on ${t.depends_on.join(', ')}` : ''}.`,
@@ -182,7 +181,7 @@ export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }
         JSON.stringify(
           {
             milestones: milestones.map((m) => ({ id: m.id, title: m.title, status: m.status, done: m.done, total: m.total, due: m.due, description: m.description })),
-            tasks: shown.map((t) => ({ id: t.id, status: t.status, kind: t.kind, title: t.title, milestone_id: t.milestone_id, depends_on: t.depends_on, mode: t.mode })),
+            tasks: shown.map((t) => ({ id: t.id, status: t.status, kind: t.kind, title: t.title, milestone_id: t.milestone_id, depends_on: t.depends_on })),
           },
           null,
           2,

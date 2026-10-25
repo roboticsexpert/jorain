@@ -330,12 +330,12 @@ function boot() {
   const prog = db.runs.find((r) => r.id === 'r_prog1')!;
   const rest = db.sampleLog('Write knowledge index rebuild on file change', 'end_turn').slice(4, -1);
   streamRun(prog, rest, 'end_turn');
-  // A fake scheduler: every 25 s pick the best auto todo task and start it.
+  // A fake scheduler: every 25 s pick the best todo task and start it.
   setInterval(() => {
     const running = db.runs.filter((r) => !r.ended_at).length;
     if (running >= CONCURRENCY) return;
     const next = db.tasks
-      .filter((t) => t.status === 'todo' && t.mode === 'auto' && !t.waiting_on.length)
+      .filter((t) => t.status === 'todo' && !t.waiting_on.length)
       .sort((a, b) => b.priority - a.priority)[0];
     if (!next) return;
     touch(next, { status: 'in_progress', branch: next.branch ?? branchFor(next) });
@@ -350,7 +350,6 @@ function newTask(proj: Project, title: string, status: TaskStatus): Task {
     project_slug: proj.slug,
     title,
     body: '',
-    mode: proj.default_mode,
     status,
     priority: 2,
     branch: null,
@@ -410,7 +409,6 @@ function route(method: string, url: URL, body: Body): RawResponse {
         slug,
         name: String(body.name),
         repo_path: (body.repo_path as string) || null,
-        default_mode: (body.default_mode as Project['default_mode']) ?? 'assisted',
         model: (body.model as string) || null,
         allowed_tools: (body.allowed_tools as string[]) ?? [],
         push_policy: (body.push_policy as Project['push_policy']) ?? 'never',
@@ -460,7 +458,6 @@ function route(method: string, url: URL, body: Body): RawResponse {
     const t: Task = {
       ...newTask(proj, `Plan next steps for ${proj.name}`, 'todo'),
       body: `Review PROJECT.md, the milestones and the board, ask what is unclear, then queue the next tasks.${focus ? `\n\nFocus: ${focus}` : ''}`,
-      mode: 'auto',
       priority: 3,
       kind: 'plan',
     };
@@ -497,7 +494,6 @@ function route(method: string, url: URL, body: Body): RawResponse {
         project_slug: proj.slug,
         title,
         body: String(body.body ?? ''),
-        mode: body.mode === 'assisted' ? 'assisted' : 'auto',
         priority: (Number(body.priority) || 2) as Schedule['priority'],
         kind,
         run_at: kind === 'once' ? new Date(String(body.run_at)).toISOString() : null,
@@ -520,7 +516,7 @@ function route(method: string, url: URL, body: Body): RawResponse {
     const sc = findSchedule(m[1]);
     const proj = findProject(sc.project_slug);
     const t = newTask(proj, sc.title, 'todo');
-    Object.assign(t, { body: sc.body, mode: sc.mode, priority: sc.priority, schedule_id: sc.id });
+    Object.assign(t, { body: sc.body, priority: sc.priority, schedule_id: sc.id });
     db.tasks.unshift(t);
     Object.assign(sc, { last_task_id: t.id, last_run_at: nowIso(), run_count: sc.run_count + 1, updated_at: nowIso() });
     logEvent(t.id, 'task.created', { source: `schedule:${sc.id}`, status: 'todo' });
@@ -532,7 +528,7 @@ function route(method: string, url: URL, body: Body): RawResponse {
     const sc = findSchedule(m[1]);
     if (method === 'GET') return json(200, sc);
     if (method === 'PATCH') {
-      for (const k of ['title', 'body', 'mode', 'priority', 'kind', 'run_at', 'cron', 'enabled'] as const) if (k in body) (sc as any)[k] = body[k];
+      for (const k of ['title', 'body', 'priority', 'kind', 'run_at', 'cron', 'enabled'] as const) if (k in body) (sc as any)[k] = body[k];
       if (sc.kind === 'once') sc.cron = null;
       else sc.run_at = null;
       if (sc.run_at) sc.run_at = new Date(sc.run_at).toISOString();
@@ -610,7 +606,7 @@ function route(method: string, url: URL, body: Body): RawResponse {
         const n = Number(body.max_parallel);
         if (!Number.isInteger(n) || n < 1 || n > 10) fail(400, 'invalid', 'max_parallel must be 1-10');
       }
-      for (const k of ['name', 'repo_path', 'default_mode', 'model', 'allowed_tools', 'push_policy', 'max_parallel', 'auto_plan', 'status'] as const) {
+      for (const k of ['name', 'repo_path', 'model', 'allowed_tools', 'push_policy', 'max_parallel', 'auto_plan', 'status'] as const) {
         if (k in body) (proj as unknown as Body)[k] = body[k];
       }
       for (const k of ['verify_command', 'setup_command'] as const) {
@@ -640,7 +636,6 @@ function route(method: string, url: URL, body: Body): RawResponse {
       const t: Task = {
         ...newTask(proj, String(body.title).trim(), st),
         body: String(body.body ?? ''),
-        mode: (body.mode as Task['mode']) ?? proj.default_mode,
         priority: (body.priority as Task['priority']) ?? 2,
         depends_on: (body.depends_on as string[] | undefined) ?? [],
         waiting_on: ((body.depends_on as string[] | undefined) ?? []).filter((d) => !db.tasks.find((x) => x.id === d)?.merged_sha),
@@ -662,7 +657,7 @@ function route(method: string, url: URL, body: Body): RawResponse {
       if (!['inbox', 'todo', 'blocked', 'failed'].includes(t.status)) fail(409, 'invalid_transition', `Cannot start a task in ${t.status}`);
       const branch = t.branch ?? branchFor(t);
       touch(t, { status: 'in_progress', branch, worktree: branch ? `/Users/owner/.secondbrain/worktrees/${t.project_slug}/${t.id}` : null });
-      startRun(t, 'start', t.mode === 'assisted' || t.kind === 'plan' ? 'tool_deferred' : 'end_turn');
+      startRun(t, 'start', t.kind === 'plan' ? 'tool_deferred' : 'end_turn');
       return json(200, t);
     }
     if (action === 'approve') {
@@ -728,7 +723,6 @@ function route(method: string, url: URL, body: Body): RawResponse {
         patch.title = String(body.title).trim();
       }
       if ('body' in body) patch.body = String(body.body);
-      if ('mode' in body) patch.mode = body.mode as Task['mode'];
       if ('priority' in body) {
         if (!PRIORITIES.includes(Number(body.priority))) fail(400, 'invalid', 'priority must be 1, 2 or 3');
         patch.priority = Number(body.priority) as Task['priority'];

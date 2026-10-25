@@ -17,7 +17,7 @@ import { getQuestion, listQuestions, openQuestionForTask, resolveAnswers } from 
 import { digestLogLine as digest, listRuns, readRunLog } from '../core/runs.ts';
 import { createSchedule, deleteSchedule, fireSchedule, listSchedules, updateSchedule } from '../core/schedules.ts';
 import { createTask, getTask, listTasks, parseStatuses, toPublicTask, updateTask } from '../core/tasks.ts';
-import { BrainError, type Priority, type Question, type Schedule, type TaskMode } from '../core/types.ts';
+import { BrainError, type Priority, type Question, type Schedule } from '../core/types.ts';
 import * as deliver from '../runner/deliver.ts';
 import { Orchestrator } from '../runner/orchestrator.ts';
 import { api as serverApi, serverBase, serverUp as isServerUp } from '../server/client.ts';
@@ -33,7 +33,7 @@ const pad = (s: string, n: number) => (s.length >= n ? s.slice(0, n) : s + ' '.r
 function printTask(id: string): void {
   const t = getTask(ctx, id);
   console.log(`${t.id}  [${t.status}]  ${t.title}`);
-  console.log(`  project ${t.project_slug} · ${t.kind === 'plan' ? 'planner · ' : ''}${t.mode} · priority ${t.priority}${t.milestone_id ? ` · milestone ${t.milestone_id}` : ''}${t.branch ? ` · branch ${t.branch}` : ''}${t.verify_status ? ` · checks ${t.verify_status}` : ''}`);
+  console.log(`  project ${t.project_slug} · ${t.kind === 'plan' ? 'planner · ' : ''}priority ${t.priority}${t.milestone_id ? ` · milestone ${t.milestone_id}` : ''}${t.branch ? ` · branch ${t.branch}` : ''}${t.verify_status ? ` · checks ${t.verify_status}` : ''}`);
   if (t.worktree) console.log(`  worktree ${t.worktree}`);
   if (t.depends_on.length) console.log(`  depends on ${t.depends_on.join(', ')}${t.waiting_on.length ? ` · waiting on ${t.waiting_on.join(', ')} (not done and merged yet)` : ''}`);
   const q = openQuestionForTask(ctx, id);
@@ -83,12 +83,11 @@ project
   .description('register a project')
   .requiredOption('-n, --name <name>', 'display name')
   .option('-r, --repo <path>', 'absolute path to the git repo the agent works in')
-  .addOption(new Option('-m, --mode <mode>', 'default task mode').choices(['auto', 'assisted']))
   .option('--model <model>', 'claude --model for this project')
   .option('-t, --allow-tool <tool...>', 'extra --allowedTools entries, e.g. "Bash(pnpm test *)"')
   .addOption(new Option('--push <policy>', 'push the base branch after an approved task is merged').choices(['never', 'after_merge']))
   .action((slug, o) => {
-    const p = createProject(ctx, { slug, name: o.name, repo_path: o.repo ?? null, default_mode: o.mode, model: o.model ?? null, allowed_tools: o.allowTool ?? [], push_policy: o.push });
+    const p = createProject(ctx, { slug, name: o.name, repo_path: o.repo ?? null, model: o.model ?? null, allowed_tools: o.allowTool ?? [], push_policy: o.push });
     console.log(`Created project ${p.slug}${p.repo_path ? ` → ${p.repo_path}` : ''}. Notes go in ${config.brainDir}/projects/${p.slug}/`);
   });
 project
@@ -130,7 +129,7 @@ project
   .command('list')
   .description('list projects')
   .action(() => {
-    for (const p of listProjects(ctx)) console.log(`${pad(p.slug, 20)} ${pad(p.status, 9)} ${pad(p.default_mode, 9)} ${p.name}${p.repo_path ? `  (${p.repo_path})` : ''}`);
+    for (const p of listProjects(ctx)) console.log(`${pad(p.slug, 20)} ${pad(p.status, 9)} ${p.name}${p.repo_path ? `  (${p.repo_path})` : ''}`);
   });
 
 const task = program.command('task').description('manage tasks');
@@ -138,9 +137,8 @@ task
   .command('add <project> <title>')
   .description('add a task (to the inbox unless --todo)')
   .option('-b, --body <text>', 'markdown description ("-" reads stdin)')
-  .addOption(new Option('-m, --mode <mode>', 'auto or assisted (default: project default)').choices(['auto', 'assisted']))
   .addOption(new Option('-p, --priority <n>', '1 low, 2 normal, 3 high').choices(['1', '2', '3']))
-  .option('--todo', 'put it straight into todo (auto tasks then get picked up by the scheduler)')
+  .option('--todo', 'put it straight into todo (the scheduler then picks it up)')
   .option('--after <ids>', 'comma-separated task ids it needs: it is not started until each is approved and merged')
   .option('-M, --milestone <idOrTitle>', 'milestone of the project')
   .action((slug, title, o) => {
@@ -149,7 +147,6 @@ task
       project_slug: slug,
       title,
       body,
-      mode: o.mode as TaskMode | undefined,
       priority: o.priority ? (Number(o.priority) as Priority) : undefined,
       status: o.todo ? 'todo' : 'inbox',
       depends_on: o.after ? splitIds(o.after) : undefined,
@@ -171,7 +168,7 @@ task
   .option('-s, --status <list>', 'comma-separated statuses')
   .action((o) => {
     for (const t of listTasks(ctx, { project: o.project, status: parseStatuses(o.status) })) {
-      console.log(`${t.id}  ${pad(t.status, 17)} ${pad(t.project_slug, 14)} ${t.mode === 'assisted' ? '(assisted) ' : ''}${t.title}${t.waiting_on.length ? `  (waiting on ${t.waiting_on.join(', ')})` : ''}`);
+      console.log(`${t.id}  ${pad(t.status, 17)} ${pad(t.project_slug, 14)} ${t.title}${t.waiting_on.length ? `  (waiting on ${t.waiting_on.join(', ')})` : ''}`);
     }
   });
 task
@@ -192,7 +189,7 @@ task
   });
 task
   .command('start <id>')
-  .description('start a session for a task now (any mode)')
+  .description('start a session for a task now')
   .action(async (id) => viaServerOr((o) => o.start(id), () => api('POST', `/tasks/${id}/start`), id));
 task
   .command('answer <id> <answers...>')
@@ -302,7 +299,6 @@ sched
   .option('-b, --body <text>', 'markdown description ("-" reads stdin)')
   .option('--at <datetime>', 'one-off: date-time, e.g. "2026-11-01 09:00" (local) or ISO with offset')
   .option('--cron <expr>', 'recurring: "min hour day month weekday", e.g. "0 9 * * 1" or @daily')
-  .addOption(new Option('-m, --mode <mode>', 'auto (default) or assisted').choices(['auto', 'assisted']))
   .addOption(new Option('-p, --priority <n>', '1 low, 2 normal, 3 high').choices(['1', '2', '3']))
   .action((slug, title, o) => {
     if (!o.at === !o.cron) throw new BrainError(400, 'bad_request', 'pass exactly one of --at or --cron');
@@ -315,7 +311,6 @@ sched
         kind: o.at ? 'once' : 'recurring',
         run_at: o.at ? new Date(o.at).toISOString() : undefined,
         cron: o.cron,
-        mode: o.mode as TaskMode | undefined,
         priority: o.priority ? (Number(o.priority) as Priority) : undefined,
       }),
     );

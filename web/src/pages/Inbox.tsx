@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { Question, Task } from '../api/types';
 import { QuestionForm } from '../components/QuestionForm';
-import { Empty, ErrorBox, Markdown, ModeBadge, Spinner } from '../components/ui';
+import { Empty, ErrorBox, Markdown, Spinner } from '../components/ui';
 import { useLive, useReconnect, useSse } from '../live';
 import { errorMessage, fullDate, timeAgo } from '../lib/util';
 
@@ -130,7 +130,6 @@ function ReviewCard({ task, onDone }: { task: Task; onDone: () => void }) {
           {task.title}
         </Link>
         <span className="muted">· {task.project_slug}</span>
-        <ModeBadge mode={task.mode} />
         <span className="grow" />
         <span className="muted" title={fullDate(task.updated_at)}>
           {timeAgo(task.updated_at)}

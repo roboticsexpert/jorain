@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError, api } from '../api/client';
-import type { McpConfig, Milestone, Project, PushPolicy, TaskMode } from '../api/types';
+import type { McpConfig, Milestone, Project, PushPolicy } from '../api/types';
 import { useMilestones } from '../components/milestones';
 import { ConfirmButton, Empty, ErrorBox, MilestoneBar, Spinner } from '../components/ui';
 import { useLive, useReconnect, useSse } from '../live';
@@ -66,7 +66,6 @@ export function ProjectsPage() {
                 <span className="proj-name">{p.name}</span>
                 <span className="muted small mono">{p.slug}</span>
                 <span className="small">
-                  <span className={`badge mode-${p.default_mode}`}>{p.default_mode}</span>
                   {p.status === 'archived' && <span className="badge">archived</span>}
                   {!p.repo_path && <span className="badge">no repo</span>}
                   {p.repo_path && p.push_policy === 'after_merge' && <span className="badge git-pushed">auto-push</span>}
@@ -152,7 +151,6 @@ function ProjectForm({ project, onSaved, onCancel }: { project?: Project; onSave
   const [slug, setSlug] = useState(project?.slug ?? '');
   const [name, setName] = useState(project?.name ?? '');
   const [repo, setRepo] = useState(project?.repo_path ?? '');
-  const [mode, setMode] = useState<TaskMode>(project?.default_mode ?? 'assisted');
   const [model, setModel] = useState(project?.model ?? '');
   const [tools, setTools] = useState<string[]>(project?.allowed_tools ?? []);
   const [pushPolicy, setPushPolicy] = useState<PushPolicy>(project?.push_policy ?? 'never');
@@ -176,7 +174,6 @@ function ProjectForm({ project, onSaved, onCancel }: { project?: Project; onSave
     const fields = {
       name: name.trim(),
       repo_path: repo.trim() || null,
-      default_mode: mode,
       model: model.trim() || null,
       allowed_tools: tools,
       push_policy: pushPolicy,
@@ -228,19 +225,10 @@ function ProjectForm({ project, onSaved, onCancel }: { project?: Project; onSave
           </select>
         </label>
       )}
-      <div className="grid2">
-        <label>
-          Default mode
-          <select value={mode} onChange={(e) => setMode(e.target.value as TaskMode)}>
-            <option value="auto">auto — Claude does it end to end</option>
-            <option value="assisted">assisted — waits for you to start</option>
-          </select>
-        </label>
-        <label>
-          Model <span className="hint">empty = CLI default</span>
-          <input className="mono" value={model} onChange={(e) => setModel(e.target.value)} placeholder="claude-opus-5-5" />
-        </label>
-      </div>
+      <label>
+        Model <span className="hint">empty = CLI default</span>
+        <input className="mono" value={model} onChange={(e) => setModel(e.target.value)} placeholder="claude-opus-5-5" />
+      </label>
       {repo.trim() && (
         <>
           <label>

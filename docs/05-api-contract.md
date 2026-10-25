@@ -7,7 +7,6 @@ Base URL: `http://localhost:3141`. All bodies are JSON. Errors: `{ "error": { "c
 ## Types
 
 ```ts
-type TaskMode   = 'auto' | 'assisted';
 type TaskStatus = 'inbox' | 'todo' | 'in_progress' | 'waiting_for_human' | 'review' | 'done' | 'blocked' | 'failed';
 type Priority   = 1 | 2 | 3;            // 1 low, 2 normal, 3 high
 type PushPolicy = 'never' | 'after_merge';
@@ -18,7 +17,6 @@ interface Project {
   slug: string;                          // [a-z0-9-]+, unique
   name: string;
   repo_path: string | null;              // absolute path to a git repo, or null for non-code projects
-  default_mode: TaskMode;
   model: string | null;                  // passed to `claude --model`; null = CLI default
   allowed_tools: string[];               // extra --allowedTools entries on top of the defaults
   push_policy: PushPolicy;               // after approve+merge: push the base branch to its upstream, or not (default never)
@@ -35,7 +33,6 @@ interface Task {
   project_slug: string;
   title: string;
   body: string;                          // markdown
-  mode: TaskMode;
   status: TaskStatus;
   priority: Priority;
   branch: string | null;                 // "brain/<id>-<slug>" when the project has a repo
@@ -64,7 +61,7 @@ interface Schedule {                     // see "Schedules" below
   id: string;                            // "s_…"
   project_slug: string;
   title: string; body: string;           // template of the task it queues
-  mode: TaskMode; priority: Priority;
+  priority: Priority;
   kind: 'once' | 'recurring';
   run_at: string | null;                 // once: ISO time
   cron: string | null;                   // recurring: 5-field cron, server local time
@@ -156,9 +153,9 @@ interface Note {
 
 ### Projects
 - `GET /api/projects` → `Project[]`
-- `POST /api/projects` body `{ slug, name, repo_path?, default_mode?, model?, allowed_tools?, push_policy?, verify_command?, setup_command?, max_parallel?, auto_plan? }` → `Project` (201). Creates `brain/projects/<slug>/PROJECT.md` + `knowledge/`.
+- `POST /api/projects` body `{ slug, name, repo_path?, model?, allowed_tools?, push_policy?, verify_command?, setup_command?, max_parallel?, auto_plan? }` → `Project` (201). Creates `brain/projects/<slug>/PROJECT.md` + `knowledge/`.
 - `GET /api/projects/:slug` → `Project`
-- `PATCH /api/projects/:slug` body: any subset of `name, repo_path, default_mode, model, allowed_tools, push_policy, verify_command, setup_command, max_parallel, auto_plan, status` → `Project` (`""`/null clears a command)
+- `PATCH /api/projects/:slug` body: any subset of `name, repo_path, model, allowed_tools, push_policy, verify_command, setup_command, max_parallel, auto_plan, status` → `Project` (`""`/null clears a command)
 - `GET /api/projects/:slug/doc` → `{ content: string }` (PROJECT.md; `""` when missing)
 - `PUT /api/projects/:slug/doc` body `{ content }` → `{ content }`
 - `POST /api/projects/:slug/plan` body `{ focus? }` → `Task` (201): creates a planner task (`kind: 'plan'`, auto, todo, priority 3) and starts it now if the project has room (else the scheduler does). 409 if the project already has a planner task that is not done.
@@ -173,15 +170,15 @@ interface Note {
 
 ### Schedules
 - `GET /api/schedules?project=<slug>` → `Schedule[]` (enabled first, then by next run)
-- `POST /api/schedules` body `{ project_slug, title, body?, mode? (default auto), priority?, kind, run_at? (once), cron? (recurring), enabled? }` → `Schedule` (201). 400 for a bad time or cron, or a cron that never matches.
+- `POST /api/schedules` body `{ project_slug, title, body?, priority?, kind, run_at? (once), cron? (recurring), enabled? }` → `Schedule` (201). 400 for a bad time or cron, or a cron that never matches.
 - `GET /api/schedules/preview?cron=<expr>` → `{ next: string[] }` (next 3 times; 400 with the parse error)
 - `GET /api/schedules/:id` → `Schedule`
-- `PATCH /api/schedules/:id` body: subset of `title, body, mode, priority, kind, run_at, cron, enabled` → `Schedule`. A new `run_at` re-arms a one-off that already ran.
+- `PATCH /api/schedules/:id` body: subset of `title, body, priority, kind, run_at, cron, enabled` → `Schedule`. A new `run_at` re-arms a one-off that already ran.
 - `DELETE /api/schedules/:id` → 204 (tasks it queued stay, with `schedule_id` null)
 - `POST /api/schedules/:id/run` → `Task` (201): queues the task now and starts it when it is auto and there is room. The schedule's next run does not move. 409 while its previous task is still queued or running.
 
 How they fire (`src/core/schedules.ts`, every scheduler tick):
-- A due schedule creates a `todo` task from its template with `schedule_id` set; a footer in the body says which schedule queued it. Auto tasks are then started like any other; they land in `review` with the agent's report.
+- A due schedule creates a `todo` task from its template with `schedule_id` set; a footer in the body says which schedule queued it. It is then started like any other todo task; they land in `review` with the agent's report.
 - `once`: fires at `run_at`, then turns itself off. `recurring`: `next_run_at` moves to the next cron match after now. Missed times (server down) are caught up with **one** task.
 - Overlap: a recurring time is skipped (event `schedule.skipped`) while the previous task is in `inbox`, `todo`, `in_progress` or `waiting_for_human`. A previous task in `review` (unread report) does not hold the next one back.
 - A recurring task's body includes the previous run's `result_summary` and asks what changed.
@@ -193,10 +190,10 @@ How they fire (`src/core/schedules.ts`, every scheduler tick):
 
 ### Tasks
 - `GET /api/tasks?project=<slug>&status=<status,status>` → `Task[]` (newest first; both filters optional)
-- `POST /api/tasks` body `{ project_slug, title, body?, mode?, priority?, status?, depends_on?, milestone? }` → `Task` (201). `status` may only be `inbox` (default) or `todo`. `milestone` is a milestone id or title of that project.
+- `POST /api/tasks` body `{ project_slug, title, body?, priority?, status?, depends_on?, milestone? }` → `Task` (201). `status` may only be `inbox` (default, waits for the owner) or `todo` (the scheduler starts it). `milestone` is a milestone id or title of that project.
 - `GET /api/tasks/:id` → `{ task: Task, questions: Question[], runs: Run[], commits: Commit[], events: Event[] }`
-- `PATCH /api/tasks/:id` body: subset of `title, body, mode, priority, status, depends_on, milestone` (`milestone`: id, title or null; `depends_on` replaces the list; 400 for an unknown task, the task itself, or a cycle) → `Task`. Manual `status` changes allowed only between `inbox`, `todo`, `blocked` (and `done` from `review`, which closes the task **without** merging); anything else → 409.
-- `POST /api/tasks/:id/start` → `Task` (from `inbox`/`todo`/`blocked`/`failed`; starts a run now regardless of mode). 409 while `waiting_on` is not empty.
+- `PATCH /api/tasks/:id` body: subset of `title, body, priority, status, depends_on, milestone` (`milestone`: id, title or null; `depends_on` replaces the list; 400 for an unknown task, the task itself, or a cycle) → `Task`. Manual `status` changes allowed only between `inbox`, `todo`, `blocked` (and `done` from `review`, which closes the task **without** merging); anything else → 409.
+- `POST /api/tasks/:id/start` → `Task` (from `inbox`/`todo`/`blocked`/`failed`; starts a run now). 409 while `waiting_on` is not empty.
 - `POST /api/tasks/:id/approve` → `Task` (`review` → `done`). For a task with commits on its branch this first squash-merges the branch into its base branch, then pushes when the project's `push_policy` is `after_merge` (see "Delivery"). 409 (task stays in `review`) on a merge conflict, when the base branch is checked out with uncommitted changes to files the task changes, or when the task or base branch is gone. A failed push does not fail the request: the task is `done`, merged, with `push_error` set.
 - `POST /api/tasks/:id/merge` → `Task`. Squash-merges a `done` task whose branch never reached its base (closed with `PATCH status → done`, or approved by an outdated server), exactly as approve would. The task stays `done`. When there is nothing left to merge, it records `task.merge_skipped` instead. 409 if the task is not `done`, is already merged, or conflicts with its base.
 - `POST /api/tasks/:id/push` → `Task`. Pushes `merged_into` to its upstream, whatever the project's policy (retry after a failure, or push by hand under `never`). 409 if the task was not merged or was already pushed. A push failure returns 200 with `push_error` set.

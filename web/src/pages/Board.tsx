@@ -9,7 +9,6 @@ import {
   ErrorBox,
   GitBadge,
   WaitingBadge,
-  ModeBadge,
   PlannerBadge,
   PriorityBadge,
   Spinner,
@@ -258,7 +257,6 @@ function Column({
             <span className="task-title">{t.title}</span>
             <span className="task-badges">
               <PlannerBadge task={t} />
-              <ModeBadge mode={t.mode} />
               {t.priority !== 2 && <PriorityBadge priority={t.priority} />}
               <GitBadge task={t} />
               <VerifyBadge task={t} />

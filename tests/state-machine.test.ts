@@ -36,7 +36,7 @@ describe('task state machine', () => {
 describe('tasks over the DB', () => {
   const setup = () => {
     const ctx = tempCtx();
-    createProject(ctx, { slug: 'p1', name: 'P1', default_mode: 'assisted' });
+    createProject(ctx, { slug: 'p1', name: 'P1' });
     createProject(ctx, { slug: 'p2', name: 'P2' });
     return ctx;
   };
@@ -44,7 +44,7 @@ describe('tasks over the DB', () => {
   it('creates tasks with project defaults and validates input', () => {
     const ctx = setup();
     const t = createTask(ctx, { project_slug: 'p1', title: ' Write docs ' });
-    expect(t).toMatchObject({ title: 'Write docs', mode: 'assisted', status: 'inbox', priority: 2, question_count: 0 });
+    expect(t).toMatchObject({ title: 'Write docs', status: 'inbox', priority: 2, question_count: 0 });
     expect(t.id).toMatch(/^t_[a-z0-9]{6}$/);
     expect(() => createTask(ctx, { project_slug: 'p1', title: 'x', status: 'review' as any })).toThrow(/inbox or todo/);
     expect(() => createTask(ctx, { project_slug: 'nope', title: 'x' })).toThrow(/not found/);
@@ -74,13 +74,14 @@ describe('tasks over the DB', () => {
     expect(types).toEqual([['task.created', undefined], ['task.status', 'in_progress'], ['task.status', 'review'], ['task.status', 'done']]);
   });
 
-  it('filters lists and picks the next runnable auto task by priority, one per busy project', () => {
+  it('filters lists and picks the next runnable todo task by priority, one per busy project', () => {
     const ctx = setup();
-    createTask(ctx, { project_slug: 'p1', title: 'assisted', status: 'todo' });
+    const other = createTask(ctx, { project_slug: 'p1', title: 'other', status: 'todo' });
     const low = createTask(ctx, { project_slug: 'p2', title: 'low', status: 'todo', priority: 1 });
     const high = createTask(ctx, { project_slug: 'p2', title: 'high', status: 'todo', priority: 3 });
     expect(nextRunnable(ctx, new Set())?.id).toBe(high.id);
-    expect(nextRunnable(ctx, new Set(['p2']))).toBeUndefined();
+    expect(nextRunnable(ctx, new Set(['p2']))?.id).toBe(other.id);
+    expect(nextRunnable(ctx, new Set(['p1', 'p2']))).toBeUndefined();
     expect(listTasks(ctx, { project: 'p2', status: ['todo'] }).map((t) => t.id)).toEqual([high.id, low.id]);
     expect(getTask(ctx, low.id).priority).toBe(1);
   });

@@ -3,7 +3,7 @@ import type { Ctx } from './context.ts';
 import { publish, recordEvent } from './events.ts';
 import { findMilestone, resolveMilestone } from './milestones.ts';
 import { getProject } from './projects.ts';
-import { badRequest, BrainError, conflict, notFound, TASK_MODES, TASK_STATUSES, type Priority, type Task, type TaskKind, type TaskMode, type TaskStatus } from './types.ts';
+import { badRequest, BrainError, conflict, notFound, TASK_STATUSES, type Priority, type Task, type TaskKind, type TaskStatus } from './types.ts';
 
 /**
  * Task state machine. `inbox → todo → in_progress → waiting_for_human → in_progress → review → done`,
@@ -114,7 +114,6 @@ export interface TaskInput {
   project_slug: string;
   title: string;
   body?: string;
-  mode?: TaskMode;
   priority?: Priority;
   status?: 'inbox' | 'todo';
   /** Tasks this one waits for: it is not started until each is done and merged. */
@@ -168,8 +167,6 @@ function dependsOn(ctx: Ctx, from: string, target: string): boolean {
 export function createTask(ctx: Ctx, input: TaskInput, source = 'owner'): TaskRow {
   const project = getProject(ctx, input.project_slug);
   if (!input.title?.trim()) throw badRequest('title is required');
-  const mode = input.mode ?? project.default_mode;
-  if (!TASK_MODES.includes(mode)) throw badRequest('mode must be auto or assisted');
   const priority = input.priority ?? 2;
   checkPriority(priority);
   const status = input.status ?? 'inbox';
@@ -182,9 +179,9 @@ export function createTask(ctx: Ctx, input: TaskInput, source = 'owner'): TaskRo
   const ts = now();
   ctx.db
     .prepare(
-      `INSERT INTO tasks (id, project_slug, title, body, mode, status, priority, milestone_id, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tasks (id, project_slug, title, body, status, priority, milestone_id, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, project.slug, input.title.trim(), input.body ?? '', mode, status, priority, milestone, kind, ts, ts);
+    .run(id, project.slug, input.title.trim(), input.body ?? '', status, priority, milestone, kind, ts, ts);
   setDeps(ctx, id, deps);
   recordEvent(ctx, id, 'task.created', { source, status, ...(kind === 'plan' ? { kind } : {}), ...(deps.length ? { depends_on: deps } : {}), ...(milestone ? { milestone_id: milestone } : {}) });
   return emit(ctx, id);
@@ -239,7 +236,6 @@ export function setTaskFields(ctx: Ctx, id: string, fields: Partial<Pick<TaskRow
 export interface TaskPatch {
   title?: string;
   body?: string;
-  mode?: TaskMode;
   priority?: Priority;
   status?: TaskStatus;
   depends_on?: string[];
@@ -261,10 +257,6 @@ export function updateTask(ctx: Ctx, id: string, patch: TaskPatch): TaskRow {
     set('title', patch.title.trim());
   }
   if (patch.body !== undefined) set('body', patch.body);
-  if (patch.mode !== undefined) {
-    if (!TASK_MODES.includes(patch.mode)) throw badRequest('mode must be auto or assisted');
-    set('mode', patch.mode);
-  }
   if (patch.priority !== undefined) {
     checkPriority(patch.priority);
     set('priority', patch.priority);
@@ -292,12 +284,12 @@ export function approveTask(ctx: Ctx, id: string, info: Record<string, unknown> 
   return transition(ctx, id, 'done', { by: 'owner', action: 'approve', ...info });
 }
 
-/** Next auto task the scheduler may start: highest priority first, then oldest; never one waiting on a dependency. `busyProjects` are at capacity. */
+/** Next todo task the scheduler may start: highest priority first, then oldest; never one waiting on a dependency. `busyProjects` are at capacity. */
 export function nextRunnable(ctx: Ctx, busyProjects: Set<string>): TaskRow | undefined {
   const rows = ctx.db
     .prepare(
       `${SELECT} JOIN projects p ON p.slug = t.project_slug
-       WHERE t.status = 'todo' AND t.mode = 'auto' AND p.status = 'active' AND NOT EXISTS (SELECT 1 ${UNMET_DEPS})
+       WHERE t.status = 'todo' AND p.status = 'active' AND NOT EXISTS (SELECT 1 ${UNMET_DEPS})
        ORDER BY t.priority DESC, t.created_at ASC, t.rowid ASC`,
     )
     .all() as unknown as RawRow[];

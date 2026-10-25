@@ -69,7 +69,7 @@ Deliberately playful ("cute") styling, all plain CSS in `src/styles.css` (light 
 - Every status has an emoji (`STATUS_EMOJI` in `src/components/ui.tsx`): 📥 inbox, 📝 todo, Clawd, Claude Code's pixel mascot (`Clawd`, inline SVG built from its terminal block art — not a keyboard emoji) for in progress,
   🙋 waiting for you, 👀 review, ✅ done, 🧱 blocked, 💥 failed. Columns also get their own colour (top border + count).
 - A card in progress has an animated gradient border and a `WorkingChip` ("Clawd + Claude is working •••": Clawd hops and blinks; the status strip shows it hopping while runs are active);
-  a waiting card shows "🙋 Needs your answer" (hand waves). Badges: ⚡ auto / 🤝 assisted, 🔥 high / 💤 low, 💬 questions.
+  a waiting card shows "🙋 Needs your answer" (hand waves). Badges: 🔥 high / 💤 low, 💬 questions.
 - Empty columns and `Empty` states show a friendly line + emoji; drawer slides in, modals pop in.
 - All animation is switched off under `prefers-reduced-motion: reduce`.
 

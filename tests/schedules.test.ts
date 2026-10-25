@@ -52,7 +52,7 @@ describe('schedules', () => {
     const [fired] = fireDue(ctx, new Date('2026-11-01T09:00:30Z'));
     expect(fired.result.status).toBe('queued');
     const task = getTask(ctx, (fired.result as { task: { id: string } }).task.id);
-    expect(task).toMatchObject({ status: 'todo', mode: 'auto', title: 'Check the transfer', schedule_id: s.id });
+    expect(task).toMatchObject({ status: 'todo', title: 'Check the transfer', schedule_id: s.id });
     expect(task.body).toMatch(/^Did it arrive\?/);
     expect(getSchedule(ctx, s.id)).toMatchObject({ enabled: false, next_run_at: null, run_count: 1, last_task_id: task.id });
     expect(fireDue(ctx, new Date('2026-11-02T00:00:00Z'))).toEqual([]);
@@ -90,7 +90,7 @@ describe('schedules', () => {
 
   it('run now keeps the schedule, disabled schedules never fire, delete keeps the tasks', () => {
     const ctx = setup();
-    const s = createSchedule(ctx, { project_slug: 'p', title: 'Weekly', kind: 'recurring', cron: '0 9 * * 1', mode: 'assisted' });
+    const s = createSchedule(ctx, { project_slug: 'p', title: 'Weekly', kind: 'recurring', cron: '0 9 * * 1' });
     const r = fireSchedule(ctx, s.id, { manual: true });
     expect(r.status).toBe('queued');
     expect(getSchedule(ctx, s.id).next_run_at).toBe(s.next_run_at);
@@ -102,7 +102,7 @@ describe('schedules', () => {
 
     const taskId = (r as { task: { id: string } }).task.id;
     deleteSchedule(ctx, s.id);
-    expect(getTask(ctx, taskId)).toMatchObject({ mode: 'assisted', schedule_id: null });
+    expect(getTask(ctx, taskId)).toMatchObject({ status: 'todo', schedule_id: null });
   });
 
   it('validates input', () => {

@@ -121,7 +121,7 @@ Alternative worth a look before building: open-source "personal assistant gatewa
 Every inbound message goes through one cheap Claude call (structured output) that decides:
 
 - `answer` → it replies to a pending question (match by thread / quoted message / most recent open question on that channel) → resume that session.
-- `task` → create a task: project (or `inbox` if unclear), title, mode guess (`auto` / `assisted`).
+- `task` → create a task: project (or `inbox` if unclear), title (lands in `inbox`).
 - `note` → save to global or project knowledge.
 - `chat` → one-off conversation with the brain (no task created).
 - `command` → `/status`, `/projects`, `/pause <project>`, etc.
@@ -133,14 +133,13 @@ If the classifier is unsure about the project it asks back with buttons instead 
 ```
 status:  inbox → todo → in_progress → waiting_for_human → in_progress → review → done
                                    ↘ blocked (external dependency)
-mode:    auto | assisted
-fields:  id, project, title, body, mode, status, priority,
+fields:  id, project, title, body, status, priority,
          session_id (for resume), open_question_id, created_at, updated_at,
          result_summary
 ```
 
-- `auto` tasks: orchestrator may start them without asking. May still end up in `waiting_for_human` if the agent hits something it cannot decide.
-- `assisted` tasks: start only when you are around, or start and immediately ask the first question.
+- `inbox`: waits for the owner to read it; nothing starts it.
+- `todo`: the orchestrator starts it without asking (as soon as dependencies and capacity allow). It may still end up in `waiting_for_human` if the agent hits something it cannot decide. There is no per-task mode (removed 2026-10-24, see D20).
 - `review`: agent finished, you get a summary with ✅ / ❌ / 💬 buttons. ✅ → done. ❌ or 💬 → back to `in_progress` with your note.
 
 Per-project stages come later as a per-project override of this list.
@@ -161,7 +160,7 @@ Brain tools exposed to the agent (as an in-process MCP server):
 - `ask_human(question, options?)` – the HITL primitive.
 - `search_knowledge(query, scope: global|project)` – grep/ripgrep over markdown first; embeddings only if that proves insufficient.
 - `save_knowledge(scope, title, content)` – write-back of learnings.
-- `create_task(project, title, body, mode)` – agent can spawn follow-ups into inbox.
+- `create_task(project, title, body)` – agent can spawn follow-ups into inbox.
 - `project_status()` – read the board.
 
 ### 6. Knowledge retrieval

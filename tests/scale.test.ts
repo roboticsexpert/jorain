@@ -162,7 +162,7 @@ describe('milestones, planner and portfolio', { timeout: 30_000 }, () => {
   it('one planner task at a time; auto_plan queues one when the project runs dry, then waits for the cooldown', () => {
     const { ctx, orch } = setup();
     const plan = createPlanTask(ctx, 'p', { focus: 'customer management' });
-    expect(plan).toMatchObject({ kind: 'plan', status: 'todo', mode: 'auto', priority: 3, title: 'Plan next steps' });
+    expect(plan).toMatchObject({ kind: 'plan', status: 'todo', priority: 3, title: 'Plan next steps' });
     expect(() => createPlanTask(ctx, 'p')).toThrow(/already has a planner task/);
     expect(needsPlanning(ctx, 'p')).toBe(false);
     ctx.db.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(plan.id);

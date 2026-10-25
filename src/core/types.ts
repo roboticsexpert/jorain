@@ -1,6 +1,5 @@
 // Shapes shared with the web UI; keep in sync with docs/05-api-contract.md.
 
-export type TaskMode = 'auto' | 'assisted';
 export type TaskStatus = 'inbox' | 'todo' | 'in_progress' | 'waiting_for_human' | 'review' | 'done' | 'blocked' | 'failed';
 export type Priority = 1 | 2 | 3;
 export type PushPolicy = 'never' | 'after_merge';
@@ -8,7 +7,6 @@ export type TaskKind = 'work' | 'plan';
 export type VerifyStatus = 'passed' | 'failed';
 export type ScheduleKind = 'once' | 'recurring';
 
-export const TASK_MODES: TaskMode[] = ['auto', 'assisted'];
 export const PUSH_POLICIES: PushPolicy[] = ['never', 'after_merge'];
 export const TASK_STATUSES: TaskStatus[] = ['inbox', 'todo', 'in_progress', 'waiting_for_human', 'review', 'done', 'blocked', 'failed'];
 
@@ -16,7 +14,6 @@ export interface Project {
   slug: string;
   name: string;
   repo_path: string | null;
-  default_mode: TaskMode;
   model: string | null;
   allowed_tools: string[];
   push_policy: PushPolicy;
@@ -38,7 +35,6 @@ export interface Task {
   project_slug: string;
   title: string;
   body: string;
-  mode: TaskMode;
   status: TaskStatus;
   priority: Priority;
   branch: string | null;
@@ -85,7 +81,6 @@ export interface Schedule {
   project_slug: string;
   title: string;
   body: string;
-  mode: TaskMode;
   priority: Priority;
   kind: ScheduleKind;
   run_at: string | null;

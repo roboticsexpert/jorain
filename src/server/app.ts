@@ -126,7 +126,7 @@ export function createApp(ctx: Ctx, orch: Orchestrator): Hono {
     if (r.status === 'skipped') throw conflict(r.reason);
     let t = r.task;
     try {
-      if (t.mode === 'auto') t = orch.start(t.id);
+      t = orch.start(t.id);
     } catch (err) {
       // At capacity: the scheduler starts it.
       if (!(err instanceof BrainError)) throw err;

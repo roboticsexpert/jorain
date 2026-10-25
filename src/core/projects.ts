@@ -3,7 +3,7 @@ import path from 'node:path';
 import { now } from '../db/client.ts';
 import type { Ctx } from './context.ts';
 import { publish, recordEvent } from './events.ts';
-import { badRequest, BrainError, notFound, PUSH_POLICIES, TASK_MODES, type Project, type PushPolicy, type TaskMode } from './types.ts';
+import { badRequest, BrainError, notFound, PUSH_POLICIES, type Project, type PushPolicy } from './types.ts';
 
 const SLUG = /^[a-z0-9-]+$/;
 
@@ -32,7 +32,6 @@ export interface ProjectInput {
   slug: string;
   name: string;
   repo_path?: string | null;
-  default_mode?: TaskMode;
   model?: string | null;
   allowed_tools?: string[];
   push_policy?: PushPolicy;
@@ -51,7 +50,6 @@ function checkRepoPath(repo: string | null | undefined): string | null {
 }
 
 function checkFields(input: Partial<ProjectInput & { status: string }>): void {
-  if (input.default_mode !== undefined && !TASK_MODES.includes(input.default_mode)) throw badRequest('default_mode must be auto or assisted');
   if (input.allowed_tools !== undefined && (!Array.isArray(input.allowed_tools) || input.allowed_tools.some((t) => typeof t !== 'string')))
     throw badRequest('allowed_tools must be an array of strings');
   if (input.push_policy !== undefined && !PUSH_POLICIES.includes(input.push_policy)) throw badRequest('push_policy must be never or after_merge');
@@ -73,14 +71,13 @@ export function createProject(ctx: Ctx, input: ProjectInput): Project {
   const ts = now();
   ctx.db
     .prepare(
-      `INSERT INTO projects (slug, name, repo_path, default_mode, model, allowed_tools, push_policy, verify_command, setup_command, max_parallel, auto_plan, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+      `INSERT INTO projects (slug, name, repo_path, model, allowed_tools, push_policy, verify_command, setup_command, max_parallel, auto_plan, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
     )
     .run(
       input.slug,
       input.name.trim(),
       repo,
-      input.default_mode ?? 'auto',
       input.model ?? null,
       JSON.stringify(input.allowed_tools ?? []),
       input.push_policy ?? 'never',
@@ -118,7 +115,6 @@ export function updateProject(ctx: Ctx, slug: string, patch: Partial<Omit<Projec
   };
   if (patch.name !== undefined) set('name', patch.name.trim());
   if (patch.repo_path !== undefined) set('repo_path', checkRepoPath(patch.repo_path));
-  if (patch.default_mode !== undefined) set('default_mode', patch.default_mode);
   if (patch.model !== undefined) set('model', patch.model || null);
   if (patch.allowed_tools !== undefined) set('allowed_tools', JSON.stringify(patch.allowed_tools));
   if (patch.push_policy !== undefined) set('push_policy', patch.push_policy);
