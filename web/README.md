@@ -13,8 +13,8 @@ questions, to-dos and unread updates from Claude, tasks in review), **Knowledge*
 **Schedules** (one-off and repeating task templates: list with next/last run and a link to
 the last task, on/off switch, Run now, edit/delete; a form with a repeat picker or custom cron and a
 preview of the next 3 runs from `GET /api/schedules/preview`), **Projects** (create/edit/archive; settings incl. verify/setup commands, parallel tasks and
-auto-plan; a planner button with optional focus; milestones list/add/edit/done/delete; a PROJECT.md
-editor; MCP config view). A status strip at the
+auto-plan, group; a planner button with optional focus; milestones list/add/edit/done/delete; a PROJECT.md
+editor; MCP config view; **groups**: create/rename/delete, member projects, a GROUP.md editor). A status strip at the
 bottom shows `GET /api/status`, updated from the `status` SSE event.
 
 ## Two modes
@@ -104,5 +104,16 @@ Deliberately playful ("cute") styling, all plain CSS in `src/styles.css` (light 
 - **Search snippets** show the `**…**` match markers from FTS5 as highlighted text.
 - **Knowledge:** new notes are written with `PUT /api/knowledge/note` and a generated frontmatter
   (`title`, `tags`, `updated`); the editor edits the whole file, frontmatter included.
+- **Groups** (see `docs/09-project-groups.md`): the Projects sidebar lists each group (🧩, click for its
+  settings and GROUP.md) with its projects indented under it, then the ungrouped ones; `?group=<slug>` /
+  `?newgroup=1` select a group / the new-group form. The board's project picker also offers groups
+  (`/board?group=<slug>`, `GET /api/tasks?group=`): cards then carry a project chip, waiting-badge tooltips name the
+  dependency's project and title, and "New task" offers only the group's projects (first member preselected).
+  The overview shows each group's project cards under a header with summed open/review/cost ("Other
+  projects" below). Knowledge lists `group:<slug>` scopes (path `groups/<slug>/knowledge/`) before the
+  group's projects. The drawer shows the group next to the project and tags dependencies of another project
+  with that project's name. `useGroups()` (`src/components/groups.ts`) keeps the group list current from
+  `group.updated` / `group.deleted`. The mock seeds a "Shop" group (`shop-api` + `shop-web`) with a
+  cross-project dependency.
 - **Run log:** lines are shown as one-line summaries of the stream-json events (toggle "raw JSON").
   Lines are stored by index, so the initial `GET /log` and live `run.log` events never duplicate.

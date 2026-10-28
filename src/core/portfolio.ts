@@ -1,7 +1,8 @@
 import type { Ctx } from './context.ts';
+import { listGroups } from './groups.ts';
 import { listMilestones } from './milestones.ts';
 import { listProjects } from './projects.ts';
-import type { Milestone, Project, TaskStatus } from './types.ts';
+import type { Group, Milestone, Project, TaskStatus } from './types.ts';
 
 export interface ProjectSummary {
   project: Project;
@@ -20,6 +21,8 @@ export interface ProjectSummary {
 
 export interface Portfolio {
   projects: ProjectSummary[];
+  /** All groups; each summary's project.group_slug says where it belongs. */
+  groups: Group[];
   totals: { cost_usd: number; cost_last_7_days: number; open_questions: number; in_review: number; running: number };
 }
 
@@ -57,6 +60,7 @@ export function portfolio(ctx: Ctx, at = new Date()): Portfolio {
   });
   return {
     projects: rows,
+    groups: listGroups(ctx),
     totals: {
       cost_usd: round(rows.reduce((s, r) => s + r.cost_usd.total, 0)),
       cost_last_7_days: round(rows.reduce((s, r) => s + r.cost_usd.last_7_days, 0)),

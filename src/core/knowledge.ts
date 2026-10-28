@@ -7,8 +7,8 @@ import { publish, recordEvent } from './events.ts';
 import { badRequest, notFound, type Note } from './types.ts';
 
 /**
- * Knowledge lives in Markdown files under BRAIN_DIR (`knowledge/**` global, `projects/<slug>/knowledge/**`
- * per project). The DB only mirrors them for search: `knowledge_docs` always, `knowledge_fts` when the
+ * Knowledge lives in Markdown files under BRAIN_DIR (`knowledge/**` global, `groups/<slug>/knowledge/**`
+ * per project group, `projects/<slug>/knowledge/**` per project). The DB only mirrors them for search: `knowledge_docs` always, `knowledge_fts` when the
  * SQLite build has FTS5. The mirror is re-synced from file mtimes before every search, so edits made
  * in any editor are picked up without a watcher.
  */
@@ -16,6 +16,7 @@ import { badRequest, notFound, type Note } from './types.ts';
 export type Scope = Note['scope'];
 
 const PROJECT_NOTE = /^projects\/([a-z0-9-]+)\/knowledge\/(.+\.md)$/;
+const GROUP_NOTE = /^groups\/([a-z0-9-]+)\/knowledge\/(.+\.md)$/;
 const GLOBAL_NOTE = /^knowledge\/(.+\.md)$/;
 
 /** Validates a note path (relative to BRAIN_DIR, forward slashes) and returns its scope. */
@@ -25,21 +26,24 @@ export function scopeOfPath(p: string): Scope {
   if (norm !== p || p.startsWith('/') || p.split('/').includes('..')) throw badRequest(`invalid note path ${p}`);
   const m = PROJECT_NOTE.exec(p);
   if (m) return `project:${m[1]}`;
+  const g = GROUP_NOTE.exec(p);
+  if (g) return `group:${g[1]}`;
   if (GLOBAL_NOTE.test(p)) return 'global';
-  throw badRequest('path must be under knowledge/ or projects/<slug>/knowledge/ and end in .md');
+  throw badRequest('path must be under knowledge/, groups/<slug>/knowledge/ or projects/<slug>/knowledge/ and end in .md');
 }
 
 export function scopeDir(scope: Scope): string {
   if (scope === 'global') return 'knowledge';
-  const slug = scope.slice('project:'.length);
+  const group = scope.startsWith('group:');
+  const slug = scope.slice(group ? 'group:'.length : 'project:'.length);
   if (!/^[a-z0-9-]+$/.test(slug)) throw badRequest(`invalid scope ${scope}`);
-  return `projects/${slug}/knowledge`;
+  return group ? `groups/${slug}/knowledge` : `projects/${slug}/knowledge`;
 }
 
 export function parseScope(s: string | undefined | null): Scope | undefined {
   if (!s) return undefined;
-  if (s === 'global' || /^project:[a-z0-9-]+$/.test(s)) return s as Scope;
-  throw badRequest('scope must be global or project:<slug>');
+  if (s === 'global' || /^(project|group):[a-z0-9-]+$/.test(s)) return s as Scope;
+  throw badRequest('scope must be global, group:<slug> or project:<slug>');
 }
 
 export function splitFrontmatter(src: string): { frontmatter: Record<string, unknown>; body: string } {
@@ -99,10 +103,11 @@ function walk(absDir: string, relDir: string, out: string[]): void {
 export function notePaths(ctx: Ctx): string[] {
   const out: string[] = [];
   walk(path.join(ctx.cfg.brainDir, 'knowledge'), 'knowledge', out);
-  const projects = path.join(ctx.cfg.brainDir, 'projects');
-  if (existsSync(projects)) {
-    for (const e of readdirSync(projects, { withFileTypes: true })) {
-      if (e.isDirectory()) walk(path.join(projects, e.name, 'knowledge'), `projects/${e.name}/knowledge`, out);
+  for (const kind of ['groups', 'projects']) {
+    const root = path.join(ctx.cfg.brainDir, kind);
+    if (!existsSync(root)) continue;
+    for (const e of readdirSync(root, { withFileTypes: true })) {
+      if (e.isDirectory() && /^[a-z0-9-]+$/.test(e.name)) walk(path.join(root, e.name, 'knowledge'), `${kind}/${e.name}/knowledge`, out);
     }
   }
   return out.sort();

@@ -70,6 +70,14 @@ Task thread (owner's request, 2026-10-28; details in [07-task-thread.md](07-task
 | D22 | **Open agent to-dos (actions) don't block review or approve.** | They are often things that happen after the work (pay, post); blocking would leave tasks stuck. |
 | D23 | **Owner messages reach a running session through a PostToolUse hook** (`additionalContext`), not a stdin pipe. No chat-channel mirror yet. | No change to how runs are spawned or resumed; verified against CLI 2.1.310. |
 
+Project groups (owner's request, 2026-10-28; details in [09-project-groups.md](09-project-groups.md)):
+
+| # | Decision | Reason |
+|---|---|---|
+| D24 | **A group above projects, not several repos in one project.** `project_groups` table + `projects.group_slug`; a task stays one branch in one repo. Work across repos = one task per repo linked by a dependency. | Everything delivery needs (repo, worktree, branch, sync, verify, merge, push) is per repo; multi-repo projects would mean rewriting it and merging two repos all-or-nothing. |
+| D25 | **Agents read sibling repos, never write them.** Siblings' main checkouts are passed as `--add-dir`; the PreToolUse hook denies Edit/Write/NotebookEdit inside them. Bash writes there are only forbidden by the prompt. | Agents need the other side's API and types; changes must go through a task in the right project so they get a branch, review and merge. |
+| D26 | **Agents file tasks on siblings into the inbox**, with no default dependency (a same-project follow-up still depends on the current task). A running task does not wait for a sibling task; it finishes and leaves a follow-up that depends on it. | Owner approves cross-project work as before; no new "waiting on dependency" state. |
+
 ## Open questions for the owner
 
 | # | Question | Why it matters | Proposed default |

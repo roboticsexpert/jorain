@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Ctx } from '../core/context.ts';
+import { findGroup, readGroupDoc, siblings } from '../core/groups.ts';
 import { readProjectFile } from '../core/projects.ts';
 import { listMessages } from '../core/messages.ts';
 import { listQuestions } from '../core/questions.ts';
@@ -69,6 +70,7 @@ export function systemPrompt(ctx: Ctx, task: TaskRow, project: Project): string 
   } else {
     lines.push('- This project has no git repository; keep changes inside the working directory.');
   }
+  lines.push(...siblingRules(ctx, project));
   if (project.verify_command && task.kind === 'work') {
     lines.push(`- Before you finish, run the project's checks and make them pass: \`${project.verify_command}\`. Second Brain runs the same command after you finish and sends failures back to you.`);
   }
@@ -76,6 +78,27 @@ export function systemPrompt(ctx: Ctx, task: TaskRow, project: Project): string 
   const extra = readProjectFile(ctx, project.slug, 'CLAUDE.md');
   if (extra?.trim()) lines.push('', '## Project instructions', '', extra.trim());
   return lines.join('\n');
+}
+
+/** Rules for a project in a group: read the sibling repos, never edit them, file tasks on them instead. */
+function siblingRules(ctx: Ctx, project: Project): string[] {
+  const sibs = siblings(ctx, project);
+  const group = project.group_slug ? findGroup(ctx, project.group_slug) : undefined;
+  if (!group || !sibs.length) return [];
+  const list = sibs.map((s) => `  - ${s.name} (project \`${s.slug}\`)${s.repo_path ? `: ${s.repo_path}` : ', no repository'}`).join('\n');
+  return [
+    `- This project is one part of the product "${group.name}" (see GROUP.md in the prompt). The other parts:\n${list}`,
+    "- You may read the other parts' repositories (the owner's main checkouts) to match their APIs, types and conventions. Never change them: no edits, commits, installs or other writing commands there. Second Brain blocks file edits in them.",
+    "- When this task needs a change in another part (a new endpoint, a field, a fix), check that part's board with mcp__brain__project_board({ project }) and, if nothing covers it, create a task there with mcp__brain__create_task({ project, ... }) that states the contract and acceptance criteria (pass depends_on: [] unless it needs your work). Then build your side against that contract. If you cannot finish without it, finish what you can and create a follow-up task in this project with depends_on: [<that task id>], so it starts once the other part is merged.",
+  ];
+}
+
+/** GROUP.md and the list of parts, for every prompt of a project in a group. */
+function groupSection(ctx: Ctx, project: Project): string[] {
+  const group = project.group_slug ? findGroup(ctx, project.group_slug) : undefined;
+  if (!group) return [];
+  const doc = readGroupDoc(ctx, group.slug).trim();
+  return ['', `## Product (GROUP.md of "${group.name}")`, '', doc || '_(empty)_'];
 }
 
 /** Earlier questions/answers and review notes, so a fresh session (e.g. a restart) has the thread. */
@@ -107,6 +130,7 @@ export function initialPrompt(ctx: Ctx, task: TaskRow, project: Project, note?: 
   if (milestone) sections.push('', `## Milestone: ${milestone.title}`, '', milestone.description.trim() || '_(no description)_');
   const projectMd = readProjectFile(ctx, project.slug, 'PROJECT.md');
   if (projectMd?.trim()) sections.push('', '## Project (PROJECT.md)', '', projectMd.trim());
+  sections.push(...groupSection(ctx, project));
   const indexFile = path.join(ctx.cfg.brainDir, 'knowledge', 'index.md');
   if (existsSync(indexFile)) sections.push('', '## Knowledge index (global)', '', readFileSync(indexFile, 'utf8').trim());
   const thread = threadSoFar(ctx, task.id);
@@ -152,6 +176,18 @@ export function planPrompt(ctx: Ctx, task: TaskRow, project: Project, note?: str
   if (task.body.trim()) sections.push('', '## What the owner asked the planner to focus on', '', task.body.trim());
   const projectMd = readProjectFile(ctx, project.slug, 'PROJECT.md');
   sections.push('', '## PROJECT.md (current)', '', projectMd?.trim() || '_(empty)_');
+  sections.push(...groupSection(ctx, project));
+  const sibs = siblings(ctx, project);
+  if (sibs.length) {
+    sections.push(
+      '',
+      '## Other parts of the product',
+      '',
+      'Plan this project only, but keep it in step with the other parts: read their repositories and boards (mcp__brain__project_board({ project })), and when this project needs work from another part, create that task in its project (mcp__brain__create_task({ project, ... })) and make the tasks here that need it depend on it.',
+      '',
+      sibs.map((x) => `- ${x.name} (\`${x.slug}\`)${x.repo_path ? `: ${x.repo_path}` : ''}`).join('\n'),
+    );
+  }
   sections.push(
     '',
     '## Milestones',

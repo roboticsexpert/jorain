@@ -18,8 +18,9 @@ import { parseScope, readNote, saveNote, searchKnowledge, type Scope } from '../
 import { getMessage, inboxMessages, listMessages, markRead } from '../core/messages.ts';
 import { createMilestone, listMilestones, resolveMilestone, updateMilestone } from '../core/milestones.ts';
 import { createPlanTask } from '../core/planning.ts';
+import { createGroup, deleteGroup, findGroup, listGroups, readGroupDoc, updateGroup, writeGroupDoc } from '../core/groups.ts';
 import { portfolio } from '../core/portfolio.ts';
-import { createProject, getProject, listProjects, projectDir, readProjectDoc, updateProject, writeProjectDoc } from '../core/projects.ts';
+import { createProject, findProject, getProject, listProjects, projectDir, readProjectDoc, updateProject, writeProjectDoc } from '../core/projects.ts';
 import { getQuestion, listQuestions, openQuestionForTask, resolveAnswers } from '../core/questions.ts';
 import { digestLogLine, listRuns, readRunLog } from '../core/runs.ts';
 import { createSchedule, deleteSchedule, fireSchedule, listSchedules, updateSchedule } from '../core/schedules.ts';
@@ -101,13 +102,25 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
     return api(ctx.cfg, method, apiPath, body);
   };
 
-  const scopeArg = z.string().optional().describe("'global', 'project' (the current or given project), 'project:<slug>', or omit for global + current project.");
+  const scopeArg = z
+    .string()
+    .optional()
+    .describe("'global', 'project' (the current or given project), 'group' (that project's group), 'project:<slug>', 'group:<slug>', or omit for global + group + current project.");
+  /** The group of the given (or current) project, or a clear error. */
+  const groupOf = (project: string | undefined): string => {
+    const g = getProject(ctx, projectSlug(project)).group_slug;
+    if (!g) throw new BrainError(400, 'bad_request', `project ${projectSlug(project)} is not in a group`);
+    return g;
+  };
   const resolveScopes = (scope: string | undefined, project?: string): Scope[] | undefined => {
     const slug = project ?? current()?.slug;
     if (scope === 'global') return ['global'];
     if (scope === 'project') return [`project:${projectSlug(slug)}`];
+    if (scope === 'group') return [`group:${groupOf(slug)}`];
     if (scope) return [parseScope(scope) ?? 'global'];
-    return slug ? ['global', `project:${slug}`] : undefined;
+    if (!slug) return undefined;
+    const g = findProject(ctx, slug)?.group_slug;
+    return g ? ['global', `group:${g}`, `project:${slug}`] : ['global', `project:${slug}`];
   };
 
   server.registerTool(
@@ -173,7 +186,7 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
       const lines = p.projects.map((r) => {
         const c = r.counts;
         return [
-          `${r.project.slug}: todo ${c.todo ?? 0} · inbox ${c.inbox ?? 0} · running ${c.in_progress ?? 0} · waiting ${c.waiting_for_human ?? 0} · review ${c.review ?? 0} · failed ${c.failed ?? 0} · done ${c.done ?? 0} · questions ${r.open_questions} · $${r.cost_usd.last_7_days} last 7 days / $${r.cost_usd.total} total${r.planning ? ' · planner running' : ''}`,
+          `${r.project.slug}${r.project.group_slug ? ` (group ${r.project.group_slug})` : ''}: todo ${c.todo ?? 0} · inbox ${c.inbox ?? 0} · running ${c.in_progress ?? 0} · waiting ${c.waiting_for_human ?? 0} · review ${c.review ?? 0} · failed ${c.failed ?? 0} · done ${c.done ?? 0} · questions ${r.open_questions} · $${r.cost_usd.last_7_days} last 7 days / $${r.cost_usd.total} total${r.planning ? ' · planner running' : ''}`,
           ...r.milestones.map((m) => `  ${m.id}  ${m.done}/${m.total}  ${m.title}`),
         ].join('\n');
       });
@@ -193,9 +206,10 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
         max_parallel: z.number().int().min(1).max(10).optional(),
         auto_plan: z.boolean().optional(),
         push_policy: z.enum(['never', 'after_merge']).optional(),
+        group: z.string().optional().describe('Slug of the group (product) this project belongs to; empty string removes it from its group.'),
       },
     },
-    tool(({ project, ...patch }) => json(updateProject(ctx, projectSlug(project), patch))),
+    tool(({ project, group, ...patch }) => json(updateProject(ctx, projectSlug(project), { ...patch, ...(group !== undefined ? { group_slug: group || null } : {}) }))),
   );
 
   server.registerTool(
@@ -207,6 +221,45 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
     tool(({ project, content }) => {
       const slug = projectSlug(project);
       return text(content === undefined ? readProjectDoc(ctx, slug) || '(empty)' : (writeProjectDoc(ctx, slug, content), 'PROJECT.md updated.'));
+    }),
+  );
+
+  server.registerTool(
+    'groups',
+    {
+      description:
+        'Project groups: several projects that make one product (e.g. a backend and a frontend repo). Their agents read each other\'s repos (never edit them), share GROUP.md and group knowledge, and file tasks on each other. ' +
+        'Without slug: list the groups. With slug: create the group if it does not exist (name required), else rename it and/or set exactly its member projects. delete: true removes the group (its projects stay).',
+      inputSchema: {
+        slug: z.string().optional(),
+        name: z.string().optional(),
+        projects: z.array(z.string()).optional().describe('Member project slugs; replaces the list.'),
+        delete: z.boolean().optional(),
+      },
+    },
+    tool(({ slug, name, projects, delete: del }) => {
+      if (!slug) {
+        const gs = listGroups(ctx);
+        return text(gs.length ? gs.map((g) => `${g.slug}  ${g.name}: ${g.projects.join(', ') || '(no projects)'}`).join('\n') : 'No groups.');
+      }
+      if (del) {
+        deleteGroup(ctx, slug);
+        return text(`Deleted group ${slug}; its projects are standalone now.`);
+      }
+      const g = findGroup(ctx, slug) ? updateGroup(ctx, slug, { name, projects }) : createGroup(ctx, { slug, name: name ?? '', projects });
+      return text(`${g.slug}  ${g.name}: ${g.projects.join(', ') || '(no projects)'}. Describe the product and how its parts talk in GROUP.md (group_doc).`);
+    }),
+  );
+
+  server.registerTool(
+    'group_doc',
+    {
+      description: "Read a group's GROUP.md (what the product is, its parts, how they talk: API contracts, URLs, shared types), or replace it when content is given. Every agent run of the group's projects reads it. group defaults to the current project's group.",
+      inputSchema: { group: z.string().optional(), content: z.string().optional() },
+    },
+    tool(({ group, content }) => {
+      const slug = group ?? groupOf(undefined);
+      return text(content === undefined ? readGroupDoc(ctx, slug) || '(empty)' : (writeGroupDoc(ctx, slug, content), 'GROUP.md updated.'));
     }),
   );
 
@@ -339,11 +392,15 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
   server.registerTool(
     'list_tasks',
     {
-      description: 'Tasks, newest first. project defaults to all projects (pass "current" for this directory\'s project).',
-      inputSchema: { project: z.string().optional(), status: z.array(z.enum(TASK_STATUSES as [string, ...string[]])).optional() },
+      description: 'Tasks, newest first. project defaults to all projects (pass "current" for this directory\'s project). group: all projects of a group ("current" for this project\'s group).',
+      inputSchema: { project: z.string().optional(), group: z.string().optional(), status: z.array(z.enum(TASK_STATUSES as [string, ...string[]])).optional() },
     },
-    tool(({ project, status }) => {
-      const tasks = listTasks(ctx, { project: project === 'current' ? projectSlug(undefined) : project, status: status as any });
+    tool(({ project, group, status }) => {
+      const tasks = listTasks(ctx, {
+        project: project === 'current' ? projectSlug(undefined) : project,
+        group: group === 'current' ? groupOf(undefined) : group,
+        status: status as any,
+      });
       if (!tasks.length) return text('No tasks.');
       return text(tasks.map((t) => `${t.id}  ${t.status}  ${t.project_slug}  ${t.kind === 'plan' ? 'planner  ' : ''}p${t.priority}${t.milestone_id ? `  ${t.milestone_id}` : ''}  ${t.title}`).join('\n'));
     }),
@@ -570,11 +627,11 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
     'save_note',
     {
       description:
-        "Save a Markdown note to the knowledge base. scope: 'global' (true across everything) or 'project' (default: the current or given project). Same title in the same scope replaces that note.",
-      inputSchema: { title: z.string().min(1), content: z.string().min(1), scope: z.enum(['global', 'project']).optional(), project: z.string().optional(), tags: z.array(z.string()).optional() },
+        "Save a Markdown note to the knowledge base. scope: 'global' (true across everything), 'group' (every project of the current or given project's group) or 'project' (default: the current or given project). Same title in the same scope replaces that note.",
+      inputSchema: { title: z.string().min(1), content: z.string().min(1), scope: z.enum(['global', 'group', 'project']).optional(), project: z.string().optional(), tags: z.array(z.string()).optional() },
     },
     tool(({ title, content, scope, project, tags }) => {
-      const s: Scope = scope === 'global' ? 'global' : `project:${projectSlug(project)}`;
+      const s: Scope = scope === 'global' ? 'global' : scope === 'group' ? `group:${groupOf(project)}` : `project:${projectSlug(project)}`;
       return text(`Saved ${saveNote(ctx, s, title, content, { tags, source: 'owner' }).path}`);
     }),
   );

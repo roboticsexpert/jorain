@@ -15,6 +15,8 @@ export interface ClaudeArgs {
   appendSystemPrompt: string;
   maxTurns: number;
   model?: string | null;
+  /** Extra directories the session may read (sibling repos of the project's group). */
+  addDirs?: string[];
 }
 
 /**
@@ -39,6 +41,7 @@ export function buildArgs(a: ClaudeArgs): string[] {
   );
   if (a.model) args.push('--model', a.model);
   // Variadic flags last, each value as its own argv entry.
+  if (a.addDirs?.length) args.push('--add-dir', ...a.addDirs);
   args.push('--tools', a.tools.join(','));
   args.push('--allowedTools', ...a.allowedTools);
   args.push('--disallowedTools', ...a.disallowedTools);

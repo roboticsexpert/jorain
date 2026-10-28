@@ -1,19 +1,35 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { Note, NoteFile, Project, SearchHit } from '../api/types';
+import type { Group, Note, NoteFile, Project, SearchHit } from '../api/types';
 import { ConfirmButton, Empty, ErrorBox, Markdown, Modal, Spinner } from '../components/ui';
 import { useLive, useReconnect, useSse } from '../live';
 import { buildNote, slugify, splitFrontmatter } from '../lib/frontmatter';
 import { cx, errorMessage } from '../lib/util';
 
-const scopeDir = (scope: string) => (scope === 'global' ? 'knowledge' : `projects/${scope.slice('project:'.length)}/knowledge`);
+const scopeDir = (scope: string) =>
+  scope === 'global'
+    ? 'knowledge'
+    : scope.startsWith('group:')
+      ? `groups/${scope.slice('group:'.length)}/knowledge`
+      : `projects/${scope.slice('project:'.length)}/knowledge`;
+
+function scopeLabel(scope: string, projects: Project[], groups: Group[]) {
+  if (scope === 'global') return 'Global';
+  if (scope.startsWith('group:')) {
+    const slug = scope.slice('group:'.length);
+    return `🧩 ${groups.find((g) => g.slug === slug)?.name ?? slug}`;
+  }
+  const slug = scope.slice('project:'.length);
+  return projects.find((p) => p.slug === slug)?.name ?? slug;
+}
 
 export function KnowledgePage() {
   const [params, setParams] = useSearchParams();
   const path = params.get('path');
   const [notes, setNotes] = useState<Note[] | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [groupList, setGroupList] = useState<Group[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [searchScope, setSearchScope] = useState('');
@@ -23,9 +39,10 @@ export function KnowledgePage() {
 
   const load = useCallback(async () => {
     try {
-      const [ns, ps] = await Promise.all([api.notes(), api.projects()]);
+      const [ns, ps, gs] = await Promise.all([api.notes(), api.projects(), api.groups().catch(() => [] as Group[])]);
       setNotes(ns);
       setProjects(ps);
+      setGroupList(gs);
       setError(null);
     } catch (e) {
       setError(errorMessage(e));
@@ -38,7 +55,7 @@ export function KnowledgePage() {
 
   useReconnect(load);
   useSse((type) => {
-    if (type === 'knowledge.changed') void load();
+    if (type === 'knowledge.changed' || type === 'group.updated' || type === 'group.deleted') void load();
   });
 
   useEffect(() => {
@@ -56,15 +73,23 @@ export function KnowledgePage() {
     return () => clearTimeout(t);
   }, [query, searchScope]);
 
+  // Scopes in reading order: global, then each group followed by its projects, then ungrouped projects.
   const groups = useMemo(() => {
-    const scopes = ['global', ...projects.filter((p) => p.status === 'active').map((p) => `project:${p.slug}`)];
+    const active = projects.filter((p) => p.status === 'active');
+    const sorted = groupList.slice().sort((a, b) => a.name.localeCompare(b.name));
+    const scopes = ['global'];
+    for (const g of sorted) {
+      scopes.push(`group:${g.slug}`);
+      for (const p of active) if (g.projects.includes(p.slug)) scopes.push(`project:${p.slug}`);
+    }
+    for (const p of active) if (!scopes.includes(`project:${p.slug}`)) scopes.push(`project:${p.slug}`);
     for (const n of notes ?? []) if (!scopes.includes(n.scope)) scopes.push(n.scope);
     return scopes.map((s) => ({
       scope: s,
-      label: s === 'global' ? 'Global' : (projects.find((p) => `project:${p.slug}` === s)?.name ?? s.slice(8)),
+      label: scopeLabel(s, projects, groupList),
       notes: (notes ?? []).filter((n) => n.scope === s),
     }));
-  }, [notes, projects]);
+  }, [notes, projects, groupList]);
 
   const open = (p: string | null, edit = false) => {
     const next = new URLSearchParams(params);
@@ -104,7 +129,7 @@ export function KnowledgePage() {
               <li key={h.path}>
                 <button type="button" className={cx('kb-hit', h.path === path && 'on')} onClick={() => open(h.path)}>
                   <span className="kb-title">{h.title}</span>
-                  <span className="muted small">{h.scope === 'global' ? 'Global' : h.scope.slice(8)}</span>
+                  <span className="muted small">{scopeLabel(h.scope, projects, groupList)}</span>
                   <span className="snippet">{highlight(h.snippet)}</span>
                 </button>
               </li>

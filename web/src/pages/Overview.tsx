@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ApiError, api } from '../api/client';
-import type { Portfolio, ProjectSummary, TaskStatus } from '../api/types';
+import type { Group, Portfolio, ProjectSummary, TaskStatus } from '../api/types';
 import { Empty, ErrorBox, MilestoneBar, Spinner, StatusEmoji } from '../components/ui';
 import { useLive, useReconnect, useSse } from '../live';
 import { errorMessage, timeAgo } from '../lib/util';
@@ -51,6 +51,8 @@ export function OverviewPage() {
       type === 'milestone.updated' ||
       type === 'milestone.deleted' ||
       type === 'project.updated' ||
+      type === 'group.updated' ||
+      type === 'group.deleted' ||
       type === 'run.ended' ||
       type === 'question.created' ||
       type === 'question.answered'
@@ -98,15 +100,77 @@ export function OverviewPage() {
               No active projects. <Link to="/projects?new=1">Create one</Link> to get started.
             </Empty>
           ) : (
-            <div className="portfolio">
-              {data.projects.map((s) => (
-                <ProjectCard key={s.project.slug} summary={s} onPlanned={refresh} />
-              ))}
-            </div>
+            <PortfolioGroups data={data} onPlanned={refresh} />
           )}
         </>
       )}
     </div>
+  );
+}
+
+/** Projects under their group's header (with summed numbers), then the ungrouped ones as before. */
+function PortfolioGroups({ data, onPlanned }: { data: Portfolio; onPlanned: () => void }) {
+  // Older backends do not send groups.
+  const groups = (data.groups ?? [])
+    .map((g) => ({ group: g, members: data.projects.filter((s) => s.project.group_slug === g.slug || g.projects.includes(s.project.slug)) }))
+    .filter((x) => x.members.length > 0)
+    .sort((a, b) => a.group.name.localeCompare(b.group.name));
+  const grouped = new Set(groups.flatMap((x) => x.members.map((s) => s.project.slug)));
+  const rest = data.projects.filter((s) => !grouped.has(s.project.slug));
+  const cards = (list: ProjectSummary[]) => (
+    <div className="portfolio">
+      {list.map((s) => (
+        <ProjectCard key={s.project.slug} summary={s} onPlanned={onPlanned} />
+      ))}
+    </div>
+  );
+
+  if (groups.length === 0) return cards(rest);
+  return (
+    <>
+      {groups.map(({ group, members }) => (
+        <section key={group.slug} className="pf-group">
+          <GroupHeader group={group} members={members} />
+          {cards(members)}
+        </section>
+      ))}
+      {rest.length > 0 && (
+        <section className="pf-group">
+          <header className="pf-group-head">
+            <h2>Other projects</h2>
+          </header>
+          {cards(rest)}
+        </section>
+      )}
+    </>
+  );
+}
+
+// Tasks that are not finished yet ("open"): everything except done.
+const OPEN: TaskStatus[] = ['inbox', 'todo', 'in_progress', 'waiting_for_human', 'review', 'blocked', 'failed'];
+
+function GroupHeader({ group, members }: { group: Group; members: ProjectSummary[] }) {
+  const sum = (f: (s: ProjectSummary) => number) => members.reduce((n, s) => n + f(s), 0);
+  const open = sum((s) => OPEN.reduce((n, st) => n + (s.counts[st] ?? 0), 0));
+  return (
+    <header className="pf-group-head">
+      <Link to={`/board?group=${encodeURIComponent(group.slug)}`} title="Open the board for the whole group">
+        <h2>🧩 {group.name}</h2>
+      </Link>
+      <span className="badge" title="Tasks not done yet, all projects of the group">
+        📝 {open} open
+      </span>
+      <span className="badge status-review" title="Tasks in review">
+        👀 {sum((s) => s.in_review)} review
+      </span>
+      <span className="muted small">
+        💸 {usd(sum((s) => s.cost_usd.last_7_days))} 7 d · {usd(sum((s) => s.cost_usd.total))} total
+      </span>
+      <span className="grow" />
+      <Link className="btn-ghost" to={`/projects?group=${encodeURIComponent(group.slug)}`}>
+        Group settings
+      </Link>
+    </header>
   );
 }
 

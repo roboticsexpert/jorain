@@ -75,7 +75,12 @@ brain milestone list shop
 brain task add shop "Customer search" -M "Backoffice v1"
 brain task milestone <id> "Backoffice v1"
 brain overview                                                     # every project: progress, questions, cost
-``` Optional per project: `CLAUDE.md` (extra agent instructions) and `mcp.json` (`{ "mcpServers": { … } }`, merged over `brain/mcp/global.json`).
+brain group add shop shop-api shop-web -n "Shop"                   # backend + frontend as one product
+brain project set shop-web --group shop                            # or move one project in ("" removes it)
+brain task list -G shop                                            # tasks of every project in the group
+```
+
+Groups: agents of a grouped project read GROUP.md (`brain/groups/<slug>/GROUP.md`, describe the product and how its parts talk there) and the group knowledge, can read the other projects' repos (writes there are blocked), and can file tasks on them (into the inbox). See [09-project-groups.md](09-project-groups.md). Optional per project: `CLAUDE.md` (extra agent instructions) and `mcp.json` (`{ "mcpServers": { … } }`, merged over `brain/mcp/global.json`).
 
 ### Add a task
 
@@ -205,8 +210,9 @@ A task whose branch was cut before the work it needs landed: press "Update from 
 |---|---|
 | State (projects, tasks, questions, runs, events) | `brain/state.sqlite` (WAL; gitignored) |
 | Raw run logs (stream-json, one line per event; stderr appended as a `brain_stderr` line) | `brain/runs/<task-id>/<run-id>.jsonl` (gitignored); also `GET /api/runs/:id/log` and `brain task log` |
-| Knowledge | `brain/knowledge/**.md`, `brain/projects/<slug>/knowledge/**.md` |
+| Knowledge | `brain/knowledge/**.md`, `brain/groups/<slug>/knowledge/**.md`, `brain/projects/<slug>/knowledge/**.md` |
 | Project context | `brain/projects/<slug>/PROJECT.md`, `CLAUDE.md`, `mcp.json` |
+| Group context | `brain/groups/<slug>/GROUP.md` |
 | Global MCP servers | `brain/mcp/global.json` |
 | Task worktrees | `~/.secondbrain/worktrees/<project>/<task-id>` (`BRAIN_WORKTREES_DIR`), removed when the task is done |
 | Per-run Claude config (merged MCP config, hook settings) | a temp dir `$TMPDIR/brain-<task-id>-*`, deleted when the run ends |

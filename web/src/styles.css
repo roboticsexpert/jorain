@@ -1770,3 +1770,56 @@ button:active:not(:disabled) {
 .composer textarea {
   width: 100%;
 }
+
+/* ---------- project groups ---------- */
+.badge.proj-chip {
+  background: var(--sky-soft);
+  color: var(--sky);
+  border-color: transparent;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: none;
+}
+.proj-group {
+  margin-bottom: 6px;
+}
+.proj-members {
+  margin-left: 12px;
+  padding-left: 6px;
+  border-left: 2px solid var(--accent-soft);
+}
+.proj-list-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 10px 0 2px 8px;
+}
+.form label.member {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-weight: normal;
+  padding: 4px 0;
+}
+.pf-group {
+  margin-bottom: 22px;
+}
+.pf-group-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.pf-group-head h2 {
+  font-size: 17px;
+}
+.pf-group-head a:has(h2) {
+  color: inherit;
+  text-decoration: none;
+}
+.pf-group-head a:has(h2):hover {
+  color: var(--accent);
+}

@@ -30,7 +30,7 @@ export function writeSessionFiles(ctx: Ctx, taskId: string, projectSlug: string)
   };
   const settings = {
     hooks: {
-      PreToolUse: [{ matcher: 'mcp__brain__ask_human|mcp__brain__wait_for_owner|AskUserQuestion|Bash', hooks: [{ type: 'command', command: command('hooks/pretooluse'), timeout: 30 }] }],
+      PreToolUse: [{ matcher: 'mcp__brain__ask_human|mcp__brain__wait_for_owner|AskUserQuestion|Bash|Edit|Write|NotebookEdit', hooks: [{ type: 'command', command: command('hooks/pretooluse'), timeout: 30 }] }],
       // Every tool: delivers the owner's messages to the running session.
       PostToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: command('hooks/posttooluse'), timeout: 30 }] }],
     },

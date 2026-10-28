@@ -11,6 +11,7 @@ import { listEvents } from '../core/events.ts';
 import { parseScope, saveNote, searchKnowledge } from '../core/knowledge.ts';
 import { createMilestone, listMilestones, resolveMilestone, updateMilestone } from '../core/milestones.ts';
 import { createPlanTask } from '../core/planning.ts';
+import { createGroup, deleteGroup, listGroups, updateGroup } from '../core/groups.ts';
 import { portfolio } from '../core/portfolio.ts';
 import { createProject, listProjects, updateProject } from '../core/projects.ts';
 import { getQuestion, listQuestions, openQuestionForTask, resolveAnswers } from '../core/questions.ts';
@@ -104,14 +105,16 @@ project
   .option('--setup <command>', 'prepares a fresh worktree, e.g. "pnpm install" ("" clears)')
   .option('--parallel <n>', 'tasks of this project that may run at once (1-10)')
   .option('--auto-plan <on|off>', 'queue a planner task when the project runs out of open work')
+  .option('--group <slug>', 'the group (product) this project belongs to ("" removes it)')
   .action((slug, o) => {
     const p = updateProject(ctx, slug, {
+      group_slug: o.group !== undefined ? o.group || null : undefined,
       verify_command: o.verify,
       setup_command: o.setup,
       max_parallel: o.parallel !== undefined ? Number(o.parallel) : undefined,
       auto_plan: o.autoPlan !== undefined ? ['on', 'true', '1', 'yes'].includes(String(o.autoPlan)) : undefined,
     });
-    console.log(`${p.slug}: verify ${p.verify_command ?? '-'} · setup ${p.setup_command ?? '-'} · parallel ${p.max_parallel} · auto-plan ${p.auto_plan ? 'on' : 'off'}`);
+    console.log(`${p.slug}: verify ${p.verify_command ?? '-'} · setup ${p.setup_command ?? '-'} · parallel ${p.max_parallel} · auto-plan ${p.auto_plan ? 'on' : 'off'} · group ${p.group_slug ?? '-'}`);
   });
 project
   .command('plan <slug> [focus...]')
@@ -129,7 +132,38 @@ project
   .command('list')
   .description('list projects')
   .action(() => {
-    for (const p of listProjects(ctx)) console.log(`${pad(p.slug, 20)} ${pad(p.status, 9)} ${p.name}${p.repo_path ? `  (${p.repo_path})` : ''}`);
+    for (const p of listProjects(ctx)) console.log(`${pad(p.slug, 20)} ${pad(p.status, 9)} ${pad(p.group_slug ?? '-', 14)} ${p.name}${p.repo_path ? `  (${p.repo_path})` : ''}`);
+  });
+
+const group = program.command('group').description('project groups: several projects (e.g. backend + frontend) that make one product');
+group
+  .command('add <slug> [projects...]')
+  .description('create a group, optionally with its member projects')
+  .requiredOption('-n, --name <name>', 'display name')
+  .action((slug: string, projects: string[], o) => {
+    const g = createGroup(ctx, { slug, name: o.name, projects });
+    console.log(`Created group ${g.slug}: ${g.projects.join(', ') || '(no projects)'}. Describe the product in ${config.brainDir}/groups/${g.slug}/GROUP.md`);
+  });
+group
+  .command('set <slug> [projects...]')
+  .description('rename a group and/or set exactly its member projects')
+  .option('-n, --name <name>', 'display name')
+  .action((slug: string, projects: string[], o) => {
+    const g = updateGroup(ctx, slug, { name: o.name, projects: projects.length ? projects : undefined });
+    console.log(`${g.slug}  ${g.name}: ${g.projects.join(', ') || '(no projects)'}`);
+  });
+group
+  .command('rm <slug>')
+  .description('delete a group (its projects stay)')
+  .action((slug) => {
+    deleteGroup(ctx, slug);
+    console.log(`Deleted group ${slug}.`);
+  });
+group
+  .command('list')
+  .description('list groups')
+  .action(() => {
+    for (const g of listGroups(ctx)) console.log(`${pad(g.slug, 20)} ${g.name}: ${g.projects.join(', ') || '(no projects)'}`);
   });
 
 const task = program.command('task').description('manage tasks');
@@ -165,9 +199,10 @@ task
   .command('list')
   .description('list tasks, newest first')
   .option('-P, --project <slug>')
+  .option('-G, --group <slug>', 'all projects of a group')
   .option('-s, --status <list>', 'comma-separated statuses')
   .action((o) => {
-    for (const t of listTasks(ctx, { project: o.project, status: parseStatuses(o.status) })) {
+    for (const t of listTasks(ctx, { project: o.project, group: o.group, status: parseStatuses(o.status) })) {
       console.log(`${t.id}  ${pad(t.status, 17)} ${pad(t.project_slug, 14)} ${t.title}${t.waiting_on.length ? `  (waiting on ${t.waiting_on.join(', ')})` : ''}`);
     }
   });
@@ -349,7 +384,7 @@ program
 
 const kn = program.command('knowledge').description('knowledge base');
 kn.command('add <scope> <title>')
-  .description('add a note; scope is "global" or "project:<slug>"; content from --content or stdin')
+  .description('add a note; scope is "global", "group:<slug>" or "project:<slug>"; content from --content or stdin')
   .option('-c, --content <markdown>')
   .option('-t, --tag <tag...>')
   .action((scope, title, o) => {

@@ -6,6 +6,7 @@ import { STATUS_LABEL } from '../api/types';
 import { useLive, useReconnect, useSse } from '../live';
 import { errorMessage, fullDate, timeAgo } from '../lib/util';
 import { AnsweredQuestion, QuestionForm } from './QuestionForm';
+import { groupOf, useGroups } from './groups';
 import { useMilestones } from './milestones';
 import { RunLog } from './RunLog';
 import { Thread } from './Thread';
@@ -145,6 +146,8 @@ function DrawerBody({
   const [note, setNote] = useState('');
   const [sync, setSync] = useState<SyncResult | null>(null);
   const { milestones } = useMilestones(task.project_slug);
+  const { groups } = useGroups();
+  const group = groupOf(groups, task.project_slug);
   const lastVerify = events.filter((e) => e.type === 'task.verify').sort((a, b) => b.id - a.id)[0];
   const open = questions.filter((q) => !q.answer);
   const answered = questions.filter((q) => q.answer);
@@ -155,6 +158,11 @@ function DrawerBody({
         <div className="drawer-meta">
           <span className="mono muted">{task.id}</span>
           <span className="muted">· {task.project_slug}</span>
+          {group && (
+            <Link className="badge proj-chip" to={`/board?group=${encodeURIComponent(group.slug)}`} title="This project's group: open the group board">
+              🧩 {group.name}
+            </Link>
+          )}
           <StatusBadge status={task.status} />
           <PriorityBadge priority={task.priority} />
           <PlannerBadge task={task} />
@@ -334,7 +342,7 @@ function DrawerBody({
             <dt>Depends on</dt>
             <dd className="deps">
               {task.depends_on.map((d) => (
-                <DependencyLink key={d} id={d} waiting={task.waiting_on.includes(d)} />
+                <DependencyLink key={d} id={d} waiting={task.waiting_on.includes(d)} fromProject={task.project_slug} />
               ))}
             </dd>
           </>
@@ -457,21 +465,31 @@ function DrawerBody({
 }
 
 /** One task this task depends on: opens it in the drawer so you can see why it is holding things up. */
-function DependencyLink({ id, waiting }: { id: string; waiting: boolean }) {
+function DependencyLink({ id, waiting, fromProject }: { id: string; waiting: boolean; fromProject: string }) {
   const [params] = useSearchParams();
   const [dep, setDep] = useState<Task | null>(null);
   const [missing, setMissing] = useState(false);
+  const [foreignName, setForeignName] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
     api.task(id).then(
-      (d) => live && setDep(d.task),
+      (d) => {
+        if (!live) return;
+        setDep(d.task);
+        // A task of another project (e.g. the backend half of a group): show that project's name.
+        if (d.task.project_slug !== fromProject)
+          api.project(d.task.project_slug).then(
+            (p) => live && setForeignName(p.name),
+            () => live && setForeignName(d.task.project_slug),
+          );
+      },
       () => live && setMissing(true),
     );
     return () => {
       live = false;
     };
-  }, [id]);
+  }, [id, fromProject]);
 
   const next = new URLSearchParams(params);
   next.set('task', id);
@@ -480,6 +498,11 @@ function DependencyLink({ id, waiting }: { id: string; waiting: boolean }) {
       <Link to={`/board?${next}`} className="task-link">
         {dep ? dep.title : <span className="mono">{id}</span>}
       </Link>{' '}
+      {dep && dep.project_slug !== fromProject && (
+        <span className="badge proj-chip" title="A task of another project">
+          {foreignName ?? dep.project_slug}
+        </span>
+      )}
       {dep && <StatusBadge status={dep.status} />}
       {missing && <span className="muted"> (not found)</span>}
       {waiting ? <span className="muted"> not merged yet</span> : ' ✓'}

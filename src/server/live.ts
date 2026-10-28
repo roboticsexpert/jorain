@@ -1,6 +1,7 @@
 import type { Ctx } from '../core/context.ts';
 import { eventsAfter, lastEventId, publish, publishedLocally } from '../core/events.ts';
 import { findMilestone } from '../core/milestones.ts';
+import { findGroup } from '../core/groups.ts';
 import { findProject } from '../core/projects.ts';
 import { findMessage } from '../core/messages.ts';
 import { findQuestion } from '../core/questions.ts';
@@ -39,6 +40,14 @@ export function startEventRelay(ctx: Ctx, intervalMs = 1500): () => void {
         else if (e.type === 'project.doc_updated') {
           const proj = findProject(ctx, p.slug);
           if (proj) publish('project.updated', proj);
+        } else if (e.type === 'group.deleted') publish('group.deleted', { slug: p.slug });
+        else if (e.type.startsWith('group.')) {
+          const g = findGroup(ctx, p.slug);
+          if (g) publish('group.updated', g);
+          for (const slug of g?.projects ?? []) {
+            const proj = findProject(ctx, slug);
+            if (proj) publish('project.updated', proj);
+          }
         }
         if (e.task_id) {
           const t = findTask(ctx, e.task_id);

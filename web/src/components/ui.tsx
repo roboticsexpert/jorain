@@ -116,10 +116,10 @@ export function GitBadge({ task }: { task: Task }) {
 }
 
 /** Shown while a task waits for tasks it depends on to be done and merged; the scheduler does not start it. */
-export function WaitingBadge({ task }: { task: Task }) {
+export function WaitingBadge({ task, describe = (id) => id }: { task: Task; describe?: (id: string) => string }) {
   if (!task.waiting_on.length || task.status === 'done') return null;
   return (
-    <span className="badge q" title={`Waits for ${task.waiting_on.join(', ')} to be approved and merged`}>
+    <span className="badge q" title={`Waits for ${task.waiting_on.map(describe).join(', ')} to be approved and merged`}>
       ⏳ waiting on {task.waiting_on.length}
     </span>
   );

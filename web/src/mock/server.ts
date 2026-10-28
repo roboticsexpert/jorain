@@ -1,7 +1,7 @@
 // In-browser fake backend for VITE_MOCK=1. Implements every endpoint of docs/05-api-contract.md
 // over the in-memory seed in ./data.ts, plus a fake SSE stream driven by timers.
 import type { RawResponse, SseHandler } from '../api/client';
-import type { Answer, Milestone, Note, NoteScope, Portfolio, Project, ProjectSummary, Question, Run, Schedule, SseEvents, SseType, Status, Task, TaskMessage, TaskStatus } from '../api/types';
+import type { Answer, Group, Milestone, Note, NoteScope, Portfolio, Project, ProjectSummary, Question, Run, Schedule, SseEvents, SseType, Status, Task, TaskMessage, TaskStatus } from '../api/types';
 import { parseFrontmatter, slugify } from '../lib/frontmatter';
 import * as db from './data';
 
@@ -38,6 +38,29 @@ function findTask(id: string): Task {
 }
 function findProject(slug: string): Project {
   return db.projects.find((p) => p.slug === slug) ?? fail(404, 'not_found', `Project ${slug} not found`);
+}
+
+function findGroup(slug: string): Group {
+  return db.groups.find((g) => g.slug === slug) ?? fail(404, 'not_found', `Group ${slug} not found`);
+}
+/** Like the backend: a group_slug in a project body must name an existing group. */
+function groupSlugOf(v: unknown): string | null {
+  if (v === null || v === undefined || v === '') return null;
+  return findGroupOr400(String(v)).slug;
+}
+function findGroupOr400(slug: string): Group {
+  return db.groups.find((g) => g.slug === slug) ?? fail(400, 'invalid', `Unknown group ${slug}`);
+}
+/** Recompute every group's member list from projects.group_slug and emit what changed. */
+function syncGroups(changedProject?: Project) {
+  for (const g of db.groups) {
+    const members = db.projects.filter((p) => p.group_slug === g.slug).map((p) => p.slug);
+    if (members.join() === g.projects.join()) continue;
+    g.projects = members;
+    g.updated_at = nowIso();
+    emit('group.updated', clone(g));
+  }
+  if (changedProject) emit('project.updated', clone(changedProject));
 }
 
 function findSchedule(id: string): Schedule {
@@ -104,6 +127,7 @@ function portfolio(): Portfolio {
   const add = (f: (x: ProjectSummary) => number) => Math.round(projects.reduce((n, x) => n + f(x), 0) * 100) / 100;
   return {
     projects,
+    groups: clone(db.groups),
     totals: {
       cost_usd: add((x) => x.cost_usd.total),
       cost_last_7_days: add((x) => x.cost_usd.last_7_days),
@@ -115,6 +139,8 @@ function portfolio(): Portfolio {
 }
 
 function scopeOf(path: string): NoteScope {
+  const g = /^groups\/([^/]+)\/knowledge\//.exec(path);
+  if (g) return `group:${g[1]}`;
   const m = /^projects\/([^/]+)\/knowledge\//.exec(path);
   return m ? `project:${m[1]}` : 'global';
 }
@@ -132,6 +158,8 @@ function noteMeta(path: string): Note {
 function validNotePath(path: string): boolean {
   if (!path.endsWith('.md') || path.includes('..')) return false;
   if (/^knowledge\/[^/].*$/.test(path)) return true;
+  const g = /^groups\/([^/]+)\/knowledge\/[^/].*$/.exec(path);
+  if (g) return db.groups.some((x) => x.slug === g[1]);
   const m = /^projects\/([^/]+)\/knowledge\/[^/].*$/.exec(path);
   return !!m && db.projects.some((p) => p.slug === m[1]);
 }
@@ -158,6 +186,8 @@ function deliver(t: Task, pushNow: boolean) {
     const sha = fakeSha();
     logEvent(t.id, 'task.merged', { sha, into: 'main' });
     touch(t, { merged_sha: sha, merged_into: 'main', merged_at: nowIso() });
+    // Tasks waiting on this one (also in other projects of a group) can start now.
+    for (const d of db.tasks) if (d.waiting_on.includes(t.id)) touch(d, { waiting_on: d.waiting_on.filter((x) => x !== t.id) });
   }
   if (pushNow && t.merged_sha && !t.pushed_at) {
     logEvent(t.id, 'task.pushed', { branch: t.merged_into, remote: 'origin' });
@@ -403,6 +433,27 @@ export function mockSubscribe(handler: SseHandler): () => void {
   return () => listeners.delete(handler);
 }
 
+/** Replace a group's members exactly; projects moved in or out get project.updated, other groups group.updated. */
+function setMembers(g: Group, slugs: string[]) {
+  for (const sl of slugs) findProject(sl);
+  for (const proj of db.projects) {
+    const want = slugs.includes(proj.slug) ? g.slug : proj.group_slug === g.slug ? null : proj.group_slug;
+    if (want === proj.group_slug) continue;
+    proj.group_slug = want;
+    proj.updated_at = nowIso();
+    emit('project.updated', clone(proj));
+  }
+  g.projects = db.projects.filter((x) => x.group_slug === g.slug).map((x) => x.slug);
+  for (const other of db.groups) {
+    if (other === g) continue;
+    const members = db.projects.filter((x) => x.group_slug === other.slug).map((x) => x.slug);
+    if (members.join() === other.projects.join()) continue;
+    other.projects = members;
+    other.updated_at = nowIso();
+    emit('group.updated', clone(other));
+  }
+}
+
 // ---------- router ----------
 
 type Body = Record<string, unknown>;
@@ -436,11 +487,12 @@ function route(method: string, url: URL, body: Body): RawResponse {
         max_parallel: Number(body.max_parallel ?? 1),
         auto_plan: body.auto_plan === true,
         status: 'active',
+        group_slug: groupSlugOf(body.group_slug),
         created_at: nowIso(),
         updated_at: nowIso(),
       };
       db.projects.push(proj);
-      emit('project.updated', clone(proj));
+      syncGroups(proj);
       db.mcp[slug] = { project: {} };
       db.docs[slug] = `# ${proj.name}\n`;
       db.notes[`projects/${slug}/knowledge/index.md`] ??= `---\ntitle: ${proj.name}\ntags: []\nupdated: ${nowIso().slice(0, 10)}\n---\n\n# ${proj.name}\n`;
@@ -631,9 +683,58 @@ function route(method: string, url: URL, body: Body): RawResponse {
       for (const k of ['verify_command', 'setup_command'] as const) {
         if (k in body) proj[k] = (body[k] as string) || null;
       }
+      if ('group_slug' in body) proj.group_slug = groupSlugOf(body.group_slug);
       proj.updated_at = nowIso();
-      emit('project.updated', clone(proj));
+      syncGroups(proj);
       return json(200, proj);
+    }
+  }
+
+  // Groups
+  if (p === '/api/groups') {
+    if (method === 'GET') return json(200, db.groups);
+    if (method === 'POST') {
+      const slug = String(body.slug ?? '');
+      if (!/^[a-z0-9-]+$/.test(slug)) fail(400, 'invalid', 'slug must match [a-z0-9-]+');
+      if (!body.name) fail(400, 'invalid', 'name is required');
+      if (db.groups.some((x) => x.slug === slug)) fail(409, 'conflict', `Group ${slug} already exists`);
+      const g: Group = { slug, name: String(body.name), projects: [], created_at: nowIso(), updated_at: nowIso() };
+      db.groups.push(g);
+      db.groupDocs[slug] = `# ${g.name}\n`;
+      setMembers(g, (body.projects as string[] | undefined) ?? []);
+      emit('group.updated', clone(g));
+      return json(201, g);
+    }
+  }
+  if ((m = /^\/api\/groups\/([^/]+)\/doc$/.exec(p))) {
+    const g = findGroup(decodeURIComponent(m[1]));
+    if (method === 'GET') return json(200, { content: db.groupDocs[g.slug] ?? '' });
+    if (method === 'PUT') {
+      db.groupDocs[g.slug] = String(body.content ?? '');
+      g.updated_at = nowIso();
+      emit('group.updated', clone(g));
+      return json(200, { content: db.groupDocs[g.slug] });
+    }
+  }
+  if ((m = /^\/api\/groups\/([^/]+)$/.exec(p))) {
+    const g = findGroup(decodeURIComponent(m[1]));
+    if (method === 'GET') return json(200, g);
+    if (method === 'PATCH') {
+      if ('name' in body) {
+        if (!String(body.name ?? '').trim()) fail(400, 'invalid', 'name is required');
+        g.name = String(body.name).trim();
+      }
+      if ('projects' in body) setMembers(g, (body.projects as string[]) ?? []);
+      g.updated_at = nowIso();
+      emit('group.updated', clone(g));
+      return json(200, g);
+    }
+    if (method === 'DELETE') {
+      setMembers(g, []);
+      db.groups.splice(db.groups.indexOf(g), 1);
+      delete db.groupDocs[g.slug];
+      emit('group.deleted', { slug: g.slug });
+      return { status: 204, contentType: '', body: '' };
     }
   }
 
@@ -641,9 +742,11 @@ function route(method: string, url: URL, body: Body): RawResponse {
   if (p === '/api/tasks') {
     if (method === 'GET') {
       const project = url.searchParams.get('project');
+      const group = url.searchParams.get('group');
+      const members = group ? findGroup(group).projects : null;
       const st = url.searchParams.get('status')?.split(',').filter(Boolean);
       const list = db.tasks
-        .filter((t) => (!project || t.project_slug === project) && (!st || st.includes(t.status)))
+        .filter((t) => (!project || t.project_slug === project) && (!members || members.includes(t.project_slug)) && (!st || st.includes(t.status)))
         .sort((a, b) => b.created_at.localeCompare(a.created_at));
       return json(200, list);
     }
@@ -886,7 +989,7 @@ function route(method: string, url: URL, body: Body): RawResponse {
       return json(200, { path, scope: scopeOf(path), frontmatter: parseFrontmatter(db.notes[path]), content: db.notes[path] });
     }
     if (method === 'PUT') {
-      if (!validNotePath(path)) fail(400, 'invalid_path', 'path must be knowledge/*.md or projects/<slug>/knowledge/*.md');
+      if (!validNotePath(path)) fail(400, 'invalid_path', 'path must be knowledge/*.md, groups/<slug>/knowledge/*.md or projects/<slug>/knowledge/*.md');
       db.notes[path] = stampUpdated(String(body.content ?? ''), path in db.notes ? db.notes[path] : null);
       emit('knowledge.changed', { path });
       return json(200, noteMeta(path));

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError, api } from '../api/client';
-import type { McpConfig, Milestone, Project, PushPolicy } from '../api/types';
+import type { Group, McpConfig, Milestone, Project, PushPolicy, SseType } from '../api/types';
+import { upsertGroup, useGroups } from '../components/groups';
 import { useMilestones } from '../components/milestones';
 import { ConfirmButton, Empty, ErrorBox, MilestoneBar, Spinner } from '../components/ui';
 import { useLive, useReconnect, useSse } from '../live';
@@ -11,7 +12,10 @@ export function ProjectsPage() {
   const [params, setParams] = useSearchParams();
   const selected = params.get('slug');
   const isNew = params.get('new') === '1';
+  const selectedGroup = params.get('group');
+  const isNewGroup = params.get('newgroup') === '1';
   const [projects, setProjects] = useState<Project[] | null>(null);
+  const { groups, setGroups, reload: reloadGroups } = useGroups();
   const [error, setError] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -28,10 +32,10 @@ export function ProjectsPage() {
     void load();
   }, [load]);
 
-  const select = (slug: string | null, asNew = false) => {
+  /** Show one thing in the main pane: a project (`slug`), a group (`group`) or a new-form flag. */
+  const select = (key: 'slug' | 'group' | 'new' | 'newgroup' | null, value = '1') => {
     const next = new URLSearchParams();
-    if (slug) next.set('slug', slug);
-    if (asNew) next.set('new', '1');
+    if (key) next.set(key, value);
     setParams(next);
   };
 
@@ -41,11 +45,29 @@ export function ProjectsPage() {
   useReconnect(load);
   useSse((type, data) => {
     if (type === 'project.updated') upsert(data as Project);
+    // Membership changes move projects between groups on the server; refetch their group_slug.
+    if (type === 'group.updated' || type === 'group.deleted') void load();
   });
 
   const visible = (projects ?? []).filter((p) => showArchived || p.status === 'active' || p.slug === selected);
   const archivedCount = (projects ?? []).filter((p) => p.status === 'archived').length;
   const current = projects?.find((p) => p.slug === selected);
+  const currentGroup = groups.find((g) => g.slug === selectedGroup);
+  const ungrouped = visible.filter((p) => !p.group_slug || !groups.some((g) => g.slug === p.group_slug));
+
+  const item = (p: Project) => (
+    <li key={p.slug}>
+      <button type="button" aria-label={p.name} className={cx('proj-item', p.slug === selected && 'on', p.status === 'archived' && 'archived')} onClick={() => select('slug', p.slug)}>
+        <span className="proj-name">{p.name}</span>
+        <span className="muted small mono">{p.slug}</span>
+        <span className="small">
+          {p.status === 'archived' && <span className="badge">archived</span>}
+          {!p.repo_path && <span className="badge">no repo</span>}
+          {p.repo_path && p.push_policy === 'after_merge' && <span className="badge git-pushed">auto-push</span>}
+        </span>
+      </button>
+    </li>
+  );
 
   return (
     <div className="page projects-page">
@@ -53,26 +75,29 @@ export function ProjectsPage() {
         <div className="toolbar">
           <h1>Projects</h1>
           <span className="grow" />
-          <button type="button" className="btn-primary" onClick={() => select(null, true)}>
+          <button type="button" className="btn-ghost" onClick={() => select('newgroup')} title="Tie several projects (e.g. backend + frontend) into one product">
+            + Group
+          </button>
+          <button type="button" className="btn-primary" onClick={() => select('new')}>
             + New
           </button>
         </div>
         {error && <ErrorBox error={error} onRetry={load} />}
         {!projects && !error && <Spinner />}
         <ul className="proj-list">
-          {visible.map((p) => (
-            <li key={p.slug}>
-              <button type="button" aria-label={p.name} className={cx('proj-item', p.slug === selected && 'on', p.status === 'archived' && 'archived')} onClick={() => select(p.slug)}>
-                <span className="proj-name">{p.name}</span>
-                <span className="muted small mono">{p.slug}</span>
-                <span className="small">
-                  {p.status === 'archived' && <span className="badge">archived</span>}
-                  {!p.repo_path && <span className="badge">no repo</span>}
-                  {p.repo_path && p.push_policy === 'after_merge' && <span className="badge git-pushed">auto-push</span>}
+          {groups.map((g) => (
+            <li key={g.slug} className="proj-group">
+              <button type="button" aria-label={`Group ${g.name}`} className={cx('proj-item proj-group-head', g.slug === selectedGroup && 'on')} onClick={() => select('group', g.slug)}>
+                <span className="proj-name">🧩 {g.name}</span>
+                <span className="muted small">
+                  {g.projects.length} project{g.projects.length === 1 ? '' : 's'}
                 </span>
               </button>
+              <ul className="proj-list proj-members">{visible.filter((p) => p.group_slug === g.slug).map(item)}</ul>
             </li>
           ))}
+          {groups.length > 0 && ungrouped.length > 0 && <li className="proj-list-label">Ungrouped</li>}
+          {ungrouped.map(item)}
         </ul>
         {archivedCount > 0 && (
           <label className="small muted">
@@ -85,23 +110,61 @@ export function ProjectsPage() {
         {isNew ? (
           <ProjectForm
             key="new"
+            groups={groups}
             onSaved={(p) => {
               upsert(p);
-              select(p.slug);
+              void reloadGroups();
+              select('slug', p.slug);
+            }}
+            onCancel={() => select(null)}
+          />
+        ) : isNewGroup ? (
+          <GroupForm
+            key="newgroup"
+            projects={projects ?? []}
+            groups={groups}
+            onSaved={(g) => {
+              setGroups((gs) => upsertGroup(gs, g));
+              void load();
+              select('group', g.slug);
             }}
             onCancel={() => select(null)}
           />
         ) : current ? (
-          <ProjectDetail key={current.slug} project={current} onSaved={upsert} />
+          <ProjectDetail
+            key={current.slug}
+            project={current}
+            groups={groups}
+            onSaved={(p) => {
+              upsert(p);
+              void reloadGroups();
+            }}
+          />
+        ) : currentGroup ? (
+          <GroupDetail
+            key={currentGroup.slug}
+            group={currentGroup}
+            projects={projects ?? []}
+            groups={groups}
+            onSaved={(g) => {
+              setGroups((gs) => upsertGroup(gs, g));
+              void load();
+            }}
+            onDeleted={() => {
+              setGroups((gs) => gs.filter((x) => x.slug !== currentGroup.slug));
+              void load();
+              select(null);
+            }}
+          />
         ) : (
-          projects && <Empty emoji="🧩">{projects.length ? 'Pick a project on the left.' : 'No projects yet. Create one to start adding tasks.'}</Empty>
+          projects && <Empty emoji="🧩">{projects.length ? 'Pick a project or group on the left.' : 'No projects yet. Create one to start adding tasks.'}</Empty>
         )}
       </main>
     </div>
   );
 }
 
-function ProjectDetail({ project, onSaved }: { project: Project; onSaved: (p: Project) => void }) {
+function ProjectDetail({ project, groups, onSaved }: { project: Project; groups: Group[]; onSaved: (p: Project) => void }) {
   const { toast, toastError } = useLive();
   const archived = project.status === 'archived';
 
@@ -137,16 +200,26 @@ function ProjectDetail({ project, onSaved }: { project: Project; onSaved: (p: Pr
         )}
       </header>
       {archived && <div className="notice">This project is archived. Its tasks are kept; it is hidden from the board filter and the new-task form.</div>}
-      <ProjectForm project={project} onSaved={(p) => (onSaved(p), toast('Project saved'))} />
+      <ProjectForm project={project} groups={groups} onSaved={(p) => (onSaved(p), toast('Project saved'))} />
       {!archived && <PlanBox project={project} />}
       <MilestonesSection slug={project.slug} />
-      <ProjectDoc slug={project.slug} />
+      <DocEditor kind="project" slug={project.slug} />
       <McpView slug={project.slug} />
     </div>
   );
 }
 
-function ProjectForm({ project, onSaved, onCancel }: { project?: Project; onSaved: (p: Project) => void; onCancel?: () => void }) {
+function ProjectForm({
+  project,
+  groups,
+  onSaved,
+  onCancel,
+}: {
+  project?: Project;
+  groups: Group[];
+  onSaved: (p: Project) => void;
+  onCancel?: () => void;
+}) {
   const { toastError } = useLive();
   const [slug, setSlug] = useState(project?.slug ?? '');
   const [name, setName] = useState(project?.name ?? '');
@@ -158,6 +231,7 @@ function ProjectForm({ project, onSaved, onCancel }: { project?: Project; onSave
   const [setup, setSetup] = useState(project?.setup_command ?? '');
   const [maxParallel, setMaxParallel] = useState(project?.max_parallel ?? 1);
   const [autoPlan, setAutoPlan] = useState(project?.auto_plan ?? false);
+  const [group, setGroup] = useState(project?.group_slug ?? '');
   const [newTool, setNewTool] = useState('');
   const [busy, setBusy] = useState(false);
   const slugOk = /^[a-z0-9-]+$/.test(slug);
@@ -181,6 +255,7 @@ function ProjectForm({ project, onSaved, onCancel }: { project?: Project; onSave
       setup_command: setup.trim() || null,
       max_parallel: Math.min(10, Math.max(1, Math.round(maxParallel) || 1)),
       auto_plan: autoPlan,
+      group_slug: group || null,
     };
     try {
       onSaved(project ? await api.updateProject(project.slug, fields) : await api.createProject({ slug, ...fields }));
@@ -212,6 +287,20 @@ function ProjectForm({ project, onSaved, onCancel }: { project?: Project; onSave
           <input value={name} onChange={(e) => setName(e.target.value)} required />
         </label>
       </div>
+      {(groups.length > 0 || group) && (
+        <label>
+          Group <span className="hint">projects in one group make one product: their agents read GROUP.md and see each other</span>
+          <select value={group} onChange={(e) => setGroup(e.target.value)}>
+            <option value="">None</option>
+            {groups.map((g) => (
+              <option key={g.slug} value={g.slug}>
+                {g.name}
+              </option>
+            ))}
+            {group && !groups.some((g) => g.slug === group) && <option value={group}>{group}</option>}
+          </select>
+        </label>
+      )}
       <label>
         Repository path <span className="hint">absolute path to a git repo; leave empty for non-code projects</span>
         <input className="mono" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="/Users/you/Projects/thing" />
@@ -541,8 +630,27 @@ function MilestoneForm({
   );
 }
 
-/** PROJECT.md: the brief every task of the project reads. Planner runs rewrite it too. */
-function ProjectDoc({ slug }: { slug: string }) {
+// PROJECT.md: the brief every task of the project reads; planner runs rewrite it too.
+// GROUP.md: the shared product description every run of every project in the group reads.
+const DOCS = {
+  project: {
+    file: 'PROJECT.md',
+    get: api.projectDoc,
+    put: api.saveProjectDoc,
+    event: 'project.updated',
+    placeholder: 'What this project is, its goals and constraints. Every task of the project reads it.',
+  },
+  group: {
+    file: 'GROUP.md',
+    get: api.groupDoc,
+    put: api.saveGroupDoc,
+    event: 'group.updated',
+    placeholder: 'What the product is, how its parts talk (API contract, shared types, env/URLs), who owns what. Every task of every project in the group reads it.',
+  },
+} satisfies Record<string, { file: string; get: unknown; put: unknown; event: SseType; placeholder: string }>;
+
+function DocEditor({ kind, slug }: { kind: keyof typeof DOCS; slug: string }) {
+  const doc = DOCS[kind];
   const { toast, toastError } = useLive();
   const [saved, setSaved] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -552,14 +660,14 @@ function ProjectDoc({ slug }: { slug: string }) {
 
   const load = useCallback(async () => {
     try {
-      const { content } = await api.projectDoc(slug);
+      const { content } = await doc.get(slug);
       setSaved(content);
       setDraft(content);
       setError(null);
     } catch (e) {
       setError(errorMessage(e));
     }
-  }, [slug]);
+  }, [doc, slug]);
 
   useEffect(() => {
     void load();
@@ -568,16 +676,16 @@ function ProjectDoc({ slug }: { slug: string }) {
   // project.updated is also sent when PROJECT.md changes (e.g. a planner rewrote it); keep local edits.
   useReconnect(() => !dirty && load());
   useSse((type, data) => {
-    if (type === 'project.updated' && (data as Project).slug === slug && !dirty) void load();
+    if (type === doc.event && (data as { slug: string }).slug === slug && !dirty) void load();
   });
 
   async function save() {
     setBusy(true);
     try {
-      const { content } = await api.saveProjectDoc(slug, draft);
+      const { content } = await doc.put(slug, draft);
       setSaved(content);
       setDraft(content);
-      toast('PROJECT.md saved');
+      toast(`${doc.file} saved`);
     } catch (e) {
       toastError(e);
     } finally {
@@ -588,7 +696,7 @@ function ProjectDoc({ slug }: { slug: string }) {
   return (
     <section className="section">
       <div className="row">
-        <h3>📄 PROJECT.md</h3>
+        <h3>📄 {doc.file}</h3>
         <span className="grow" />
         {dirty && (
           <button type="button" className="btn-ghost" onClick={() => setDraft(saved ?? '')}>
@@ -606,10 +714,159 @@ function ProjectDoc({ slug }: { slug: string }) {
           rows={14}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="What this project is, its goals and constraints. Every task of the project reads it."
-          aria-label="PROJECT.md"
+          placeholder={doc.placeholder}
+          aria-label={doc.file}
         />
       )}
     </section>
+  );
+}
+
+function GroupDetail({
+  group,
+  projects,
+  groups,
+  onSaved,
+  onDeleted,
+}: {
+  group: Group;
+  projects: Project[];
+  groups: Group[];
+  onSaved: (g: Group) => void;
+  onDeleted: () => void;
+}) {
+  const { toast, toastError } = useLive();
+
+  async function remove() {
+    try {
+      await api.deleteGroup(group.slug);
+      toast(`Group ${group.name} deleted; its projects are ungrouped`);
+      onDeleted();
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
+  return (
+    <div className="proj-detail">
+      <header className="row">
+        <h2>🧩 {group.name}</h2>
+        <span className="muted small">updated {timeAgo(group.updated_at)}</span>
+        <span className="grow" />
+        <Link className="btn-ghost" to={`/board?group=${encodeURIComponent(group.slug)}`}>
+          Open board
+        </Link>
+        <Link className="btn-ghost" to="/knowledge">
+          Knowledge
+        </Link>
+        <ConfirmButton className="btn-ghost danger" confirmLabel="Delete group" onConfirm={remove}>
+          Delete
+        </ConfirmButton>
+      </header>
+      <p className="muted small">
+        A group ties several projects into one product. Each project keeps its own repo, board and settings; their agents also read GROUP.md and
+        the group&apos;s knowledge. Deleting the group keeps the projects.
+      </p>
+      <GroupForm group={group} projects={projects} groups={groups} onSaved={(g) => (onSaved(g), toast('Group saved'))} />
+      <DocEditor kind="group" slug={group.slug} />
+    </div>
+  );
+}
+
+function GroupForm({
+  group,
+  projects,
+  groups,
+  onSaved,
+  onCancel,
+}: {
+  group?: Group;
+  projects: Project[];
+  groups: Group[];
+  onSaved: (g: Group) => void;
+  onCancel?: () => void;
+}) {
+  const { toastError } = useLive();
+  const [slug, setSlug] = useState(group?.slug ?? '');
+  const [name, setName] = useState(group?.name ?? '');
+  const [members, setMembers] = useState<string[]>(group?.projects ?? []);
+  const [busy, setBusy] = useState(false);
+  const slugOk = /^[a-z0-9-]+$/.test(slug);
+  // Active projects plus archived members (so they can be removed).
+  const choices = projects.filter((p) => p.status === 'active' || members.includes(p.slug));
+  const otherGroup = (p: Project) => groups.find((g) => g.slug !== group?.slug && (g.slug === p.group_slug || g.projects.includes(p.slug)));
+
+  const toggle = (sl: string, on: boolean) => setMembers((ms) => (on ? [...ms, sl] : ms.filter((x) => x !== sl)));
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      onSaved(
+        group
+          ? await api.updateGroup(group.slug, { name: name.trim(), projects: members })
+          : await api.createGroup({ slug, name: name.trim(), projects: members }),
+      );
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="form proj-form" onSubmit={submit}>
+      {!group && <h2>New group</h2>}
+      <div className="grid2">
+        <label>
+          Slug
+          <input
+            value={slug}
+            onChange={(e) => setSlug(e.target.value.toLowerCase())}
+            disabled={!!group}
+            required
+            placeholder="shop"
+            aria-invalid={!!slug && !slugOk}
+          />
+          {!group && slug && !slugOk && <span className="danger small">Only a–z, 0–9 and dashes.</span>}
+        </label>
+        <label>
+          Name
+          <input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Shop" />
+        </label>
+      </div>
+      <fieldset className="tools">
+        <legend>
+          Projects <span className="hint">a project belongs to one group at most; ticking one from another group moves it here</span>
+        </legend>
+        {choices.length === 0 && <div className="muted small">No projects yet.</div>}
+        <ul>
+          {choices.map((p) => {
+            const other = otherGroup(p);
+            return (
+              <li key={p.slug}>
+                <label className="member">
+                  <input type="checkbox" checked={members.includes(p.slug)} onChange={(e) => toggle(p.slug, e.target.checked)} />
+                  <span>{p.name}</span>
+                  <span className="muted small mono">{p.slug}</span>
+                  {p.status === 'archived' && <span className="badge">archived</span>}
+                  {other && !members.includes(p.slug) && <span className="badge">in {other.name}</span>}
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      </fieldset>
+      <div className="row end">
+        {onCancel && (
+          <button type="button" className="btn-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
+        <button type="submit" className="btn-primary" disabled={busy || !name.trim() || (!group && !slugOk)}>
+          {group ? 'Save changes' : 'Create group'}
+        </button>
+      </div>
+    </form>
   );
 }

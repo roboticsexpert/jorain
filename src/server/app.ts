@@ -10,6 +10,7 @@ import { hasFts5 } from '../db/client.ts';
 import { createMilestone, deleteMilestone, getMilestone, listMilestones, updateMilestone } from '../core/milestones.ts';
 import { createPlanTask } from '../core/planning.ts';
 import { portfolio } from '../core/portfolio.ts';
+import { createGroup, deleteGroup, getGroup, listGroups, readGroupDoc, updateGroup, writeGroupDoc } from '../core/groups.ts';
 import { createProject, getProject, listProjects, projectMcp, readProjectDoc, updateProject, writeProjectDoc } from '../core/projects.ts';
 import { getQuestion, listQuestions, validateAnswers } from '../core/questions.ts';
 import { getRun, listRuns, readRunLog } from '../core/runs.ts';
@@ -103,6 +104,22 @@ export function createApp(ctx: Ctx, orch: Orchestrator): Hono {
     return c.json(toPublicTask(t), 201);
   });
 
+  // Groups (several projects that make one product)
+  api.get('/groups', (c) => c.json(listGroups(ctx)));
+  api.post('/groups', async (c) => c.json(createGroup(ctx, await body(c)), 201));
+  api.get('/groups/:slug', (c) => c.json(getGroup(ctx, c.req.param('slug'))));
+  api.patch('/groups/:slug', async (c) => c.json(updateGroup(ctx, c.req.param('slug'), await body(c))));
+  api.delete('/groups/:slug', (c) => {
+    deleteGroup(ctx, c.req.param('slug'));
+    return c.body(null, 204);
+  });
+  api.get('/groups/:slug/doc', (c) => c.json({ content: readGroupDoc(ctx, c.req.param('slug')) }));
+  api.put('/groups/:slug/doc', async (c) => {
+    const { content } = await body(c);
+    if (typeof content !== 'string') throw badRequest('content must be a string');
+    return c.json({ content: writeGroupDoc(ctx, c.req.param('slug'), content) });
+  });
+
   // Milestones
   api.get('/projects/:slug/milestones', (c) => c.json(listMilestones(ctx, c.req.param('slug'))));
   api.post('/projects/:slug/milestones', async (c) => c.json(createMilestone(ctx, c.req.param('slug'), await body(c)), 201));
@@ -140,7 +157,7 @@ export function createApp(ctx: Ctx, orch: Orchestrator): Hono {
   api.get('/portfolio', (c) => c.json(portfolio(ctx)));
 
   // Tasks
-  api.get('/tasks', (c) => c.json(listTasks(ctx, { project: c.req.query('project') || undefined, status: parseStatuses(c.req.query('status')) }).map(toPublicTask)));
+  api.get('/tasks', (c) => c.json(listTasks(ctx, { project: c.req.query('project') || undefined, group: c.req.query('group') || undefined, status: parseStatuses(c.req.query('status')) }).map(toPublicTask)));
   api.post('/tasks', async (c) => c.json(toPublicTask(createTask(ctx, await body(c))), 201));
   api.get('/tasks/:id', (c) => c.json(taskDetail(ctx, c.req.param('id'))));
   api.patch('/tasks/:id', async (c) => c.json(toPublicTask(updateTask(ctx, c.req.param('id'), await body(c)))));

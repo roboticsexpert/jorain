@@ -9,6 +9,7 @@ import { loadConfig } from '../config.ts';
 import { createCtx, type Ctx } from '../core/context.ts';
 import { saveNote, searchKnowledge, type Scope } from '../core/knowledge.ts';
 import { createMilestone, listMilestones } from '../core/milestones.ts';
+import { siblings } from '../core/groups.ts';
 import { findProject, writeProjectDoc } from '../core/projects.ts';
 import { listMessages, postAgentMessage, takePending, waitReady } from '../core/messages.ts';
 import { createQuestion, listQuestions } from '../core/questions.ts';
@@ -23,11 +24,18 @@ const fail = (t: string) => ({ content: [{ type: 'text' as const, text: t }], is
 export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }): McpServer {
   const server = new McpServer({ name: 'brain', version: '0.1.0' });
 
+  const group = () => (env.project ? findProject(ctx, env.project)?.group_slug ?? null : null);
+  /** Projects this session may file tasks on and read boards of: its own and its group siblings. */
+  const reachable = (slug: string) => slug === env.project || (!!env.project && siblings(ctx, env.project).some((s) => s.slug === slug));
+
   const resolveScopes = (scope: string | undefined): Scope[] | undefined => {
+    const g = group();
     if (scope === 'global') return ['global'];
     if (scope === 'project') return env.project ? [`project:${env.project}`] : [];
-    if (scope?.startsWith('project:')) return [scope as Scope];
-    return env.project ? ['global', `project:${env.project}`] : undefined;
+    if (scope === 'group') return g ? [`group:${g}`] : [];
+    if (scope?.startsWith('project:') || scope?.startsWith('group:')) return [scope as Scope];
+    if (!env.project) return undefined;
+    return g ? ['global', `group:${g}`, `project:${env.project}`] : ['global', `project:${env.project}`];
   };
 
   const questionSchema = z.object({
@@ -119,7 +127,7 @@ export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }
     'search_knowledge',
     {
       description:
-        "Full-text search over the owner's knowledge base (Markdown notes). scope: 'all' (global + this project, default), 'global', 'project', or 'project:<slug>'. Returns matching notes with a snippet and their path; read a note with the Read tool at BRAIN_DIR/<path> or ask for it via the snippet.",
+        "Full-text search over the owner's knowledge base (Markdown notes). scope: 'all' (global + this project's group + this project, default), 'global', 'group', 'project', or 'project:<slug>'. Returns matching notes with a snippet and their path; read a note with the Read tool at BRAIN_DIR/<path> or ask for it via the snippet.",
       inputSchema: { query: z.string().min(1), scope: z.string().optional() },
     },
     async ({ query, scope }) => {
@@ -137,11 +145,13 @@ export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }
     'save_knowledge',
     {
       description:
-        "Save a durable learning as a Markdown note. scope: 'project' (default, this project) or 'global' (true across everything the owner does). Same title in the same scope replaces that note.",
-      inputSchema: { scope: z.enum(['global', 'project']).optional(), title: z.string().min(1), content: z.string().min(1), tags: z.array(z.string()).optional() },
+        "Save a durable learning as a Markdown note. scope: 'project' (default, this project), 'group' (true for every part of this product, e.g. the API contract between backend and frontend; only when the project is in a group) or 'global' (true across everything the owner does). Same title in the same scope replaces that note.",
+      inputSchema: { scope: z.enum(['global', 'group', 'project']).optional(), title: z.string().min(1), content: z.string().min(1), tags: z.array(z.string()).optional() },
     },
     async ({ scope, title, content, tags }) => {
-      const s: Scope = scope === 'global' || !env.project ? 'global' : `project:${env.project}`;
+      const g = group();
+      if (scope === 'group' && !g) return fail('This project is not in a group; use scope project or global.');
+      const s: Scope = scope === 'global' || !env.project ? 'global' : scope === 'group' ? `group:${g}` : `project:${env.project}`;
       const note = saveNote(ctx, s, title, content, { tags, source: env.taskId ? `agent:${env.taskId}` : 'agent' });
       return text(`Saved ${note.path}`);
     },
@@ -161,8 +171,8 @@ export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }
     'create_task',
     {
       description:
-        "Create a task in the owner's inbox (it is not started until the owner moves it to todo or starts it). project defaults to the current project. " +
-        'From a work task it depends on the current task by default: it will not start until this task is approved and merged, so it builds on your work. ' +
+        "Create a task in the owner's inbox (it is not started until the owner moves it to todo or starts it). project defaults to the current project; it may also be another project of the same group (product), e.g. the backend when you work on the frontend. " +
+        'From a work task, a task in the same project depends on the current task by default: it will not start until this task is approved and merged, so it builds on your work (a task in another project of the group has no default dependency). ' +
         'Pass depends_on: [] for a task that does not need this work, or the task ids it needs. From a planner task the default is no dependencies. ' +
         'milestone: the id or exact title of one of the project\'s milestones.',
       inputSchema: {
@@ -177,8 +187,10 @@ export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }
     async ({ title, body, project, priority, milestone, depends_on }) => {
       const slug = project ?? env.project;
       if (!slug || !findProject(ctx, slug)) return fail(`Unknown project ${slug ?? '(none)'}.`);
+      if (env.project && !reachable(slug)) return fail(`Project ${slug} is not part of this project's group; you can create tasks only in ${[env.project, ...siblings(ctx, env.project).map((x) => x.slug)].join(', ')}.`);
       const cur = currentTask();
-      const deps = depends_on ?? (cur && cur.kind === 'work' ? [cur.id] : []);
+      // A task in another part of the product usually is what this task needs, not a follow-up of it.
+      const deps = depends_on ?? (cur && cur.kind === 'work' && slug === env.project ? [cur.id] : []);
       return attempt(
         () =>
           createTask(
@@ -219,13 +231,16 @@ export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }
   server.registerTool(
     'project_board',
     {
-      description: "The current project's milestones (with progress) and its tasks: id, status, title, milestone and dependencies. Use it to avoid duplicate tasks and to pick dependencies.",
-      inputSchema: { include_done: z.boolean().optional().describe('Also list done tasks (default: the 20 most recent).') },
+      description:
+        "A project's milestones (with progress) and its tasks: id, status, title, milestone and dependencies. Use it to avoid duplicate tasks and to pick dependencies. project defaults to the current one; another project of the same group can be given.",
+      inputSchema: { include_done: z.boolean().optional().describe('Also list done tasks (default: the 20 most recent).'), project: z.string().optional() },
     },
-    async ({ include_done }) => {
+    async ({ include_done, project }) => {
       if (!env.project) return fail('No project is attached to this session.');
-      const milestones = listMilestones(ctx, env.project);
-      const tasks = listTasks(ctx, { project: env.project });
+      const slug = project ?? env.project;
+      if (!reachable(slug)) return fail(`Project ${slug} is not part of this project's group.`);
+      const milestones = listMilestones(ctx, slug);
+      const tasks = listTasks(ctx, { project: slug });
       const done = tasks.filter((t) => t.status === 'done');
       const shown = [...tasks.filter((t) => t.status !== 'done'), ...(include_done ? done : done.slice(0, 20))];
       return text(

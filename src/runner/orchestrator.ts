@@ -12,6 +12,7 @@ import { getTask, listTasks, setTaskFields, setWaitingFor, STARTABLE, transition
 import { BrainError, conflict, type ActionStatus, type Answer, type Project, type Question, type Run, type TaskMessage } from '../core/types.ts';
 import { buildArgs, spawnClaude, type ClaudeExit, type RunningClaude } from './claude.ts';
 import { agentEnv } from './env.ts';
+import { siblingRepos } from '../core/groups.ts';
 import * as git from './git.ts';
 import { builtinTools, DEFAULT_ALLOWED_TOOLS, DISALLOWED_TOOLS, initialPrompt, systemPrompt } from './prompt.ts';
 import { writeSessionFiles } from './session-files.ts';
@@ -268,6 +269,7 @@ export class Orchestrator {
       appendSystemPrompt: systemPrompt(this.ctx, task, project),
       maxTurns: cfg.maxTurns,
       model: project.model,
+      addDirs: siblingRepos(this.ctx, project),
     });
     const cwd = workDir(this.ctx, task, project);
     const proc = spawnClaude({

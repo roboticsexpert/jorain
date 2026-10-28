@@ -24,8 +24,16 @@ interface Project {
   setup_command: string | null;          // prepares a fresh worktree, e.g. "pnpm install"; the agent runs it ($BRAIN_REPO = main checkout)
   max_parallel: number;                  // 1-10 tasks of this project running at once, each in its own worktree (default 1)
   auto_plan: boolean;                    // queue a planner task when the project runs out of open work
+  group_slug: string | null;             // the group (product) this project belongs to
   status: 'active' | 'archived';
   created_at: string; updated_at: string;   // ISO 8601
+}
+
+interface Group {                        // several projects that make one product (docs/09-project-groups.md)
+  slug: string;                          // [a-z0-9-]+, unique
+  name: string;
+  projects: string[];                    // member project slugs, by name (archived ones included)
+  created_at: string; updated_at: string;
 }
 
 interface Task {
@@ -172,13 +180,21 @@ interface Note {
 
 ### Projects
 - `GET /api/projects` → `Project[]`
-- `POST /api/projects` body `{ slug, name, repo_path?, model?, allowed_tools?, push_policy?, verify_command?, setup_command?, max_parallel?, auto_plan? }` → `Project` (201). Creates `brain/projects/<slug>/PROJECT.md` + `knowledge/`.
+- `POST /api/projects` body `{ slug, name, repo_path?, model?, allowed_tools?, push_policy?, verify_command?, setup_command?, max_parallel?, auto_plan?, group_slug? }` → `Project` (201). An unknown `group_slug` is a 400. Creates `brain/projects/<slug>/PROJECT.md` + `knowledge/`.
 - `GET /api/projects/:slug` → `Project`
-- `PATCH /api/projects/:slug` body: any subset of `name, repo_path, model, allowed_tools, push_policy, verify_command, setup_command, max_parallel, auto_plan, status` → `Project` (`""`/null clears a command)
+- `PATCH /api/projects/:slug` body: any subset of `name, repo_path, model, allowed_tools, push_policy, verify_command, setup_command, max_parallel, auto_plan, group_slug, status` → `Project` (`""`/null clears a command)
 - `GET /api/projects/:slug/doc` → `{ content: string }` (PROJECT.md; `""` when missing)
 - `PUT /api/projects/:slug/doc` body `{ content }` → `{ content }`
 - `POST /api/projects/:slug/plan` body `{ focus? }` → `Task` (201): creates a planner task (`kind: 'plan'`, auto, todo, priority 3) and starts it now if the project has room (else the scheduler does). 409 if the project already has a planner task that is not done.
 - `GET /api/projects/:slug/mcp` → `{ global: object, project: object, merged: object }` (MCP configs as stored)
+
+### Groups
+- `GET /api/groups` → `Group[]`
+- `POST /api/groups` body `{ slug, name, projects? }` → `Group` (201). Creates `brain/groups/<slug>/GROUP.md` + `knowledge/`; listed projects move into the group.
+- `GET /api/groups/:slug` → `Group`
+- `PATCH /api/groups/:slug` body `{ name?, projects? }` → `Group` (`projects` replaces the member list)
+- `DELETE /api/groups/:slug` → 204 (projects stay, ungrouped; GROUP.md and group notes stay on disk)
+- `GET /api/groups/:slug/doc` → `{ content }` (GROUP.md); `PUT /api/groups/:slug/doc` body `{ content }` → `{ content }`
 
 ### Milestones
 - `GET /api/projects/:slug/milestones` → `Milestone[]` (ordered by `position`, done ones included)
@@ -205,10 +221,10 @@ How they fire (`src/core/schedules.ts`, every scheduler tick):
 - Archived projects' schedules don't fire.
 
 ### Overview
-- `GET /api/portfolio` → `{ projects: ProjectSummary[], totals: { cost_usd, cost_last_7_days, open_questions, in_review, running } }` (active projects only)
+- `GET /api/portfolio` → `{ projects: ProjectSummary[], groups: Group[], totals: { cost_usd, cost_last_7_days, open_questions, in_review, running } }` (active projects only)
 
 ### Tasks
-- `GET /api/tasks?project=<slug>&status=<status,status>` → `Task[]` (newest first; both filters optional)
+- `GET /api/tasks?project=<slug>&group=<slug>&status=<status,status>` → `Task[]` (newest first; all filters optional; `group` = every project of the group)
 - `POST /api/tasks` body `{ project_slug, title, body?, priority?, status?, depends_on?, milestone? }` → `Task` (201). `status` may only be `inbox` (default, waits for the owner) or `todo` (the scheduler starts it). `milestone` is a milestone id or title of that project.
 - `GET /api/tasks/:id` → `{ task: Task, questions: Question[], runs: Run[], commits: Commit[], events: Event[], messages: TaskMessage[] }` (messages oldest first)
 - `PATCH /api/tasks/:id` body: subset of `title, body, priority, status, depends_on, milestone` (`milestone`: id, title or null; `depends_on` replaces the list; 400 for an unknown task, the task itself, or a cycle) → `Task`. Manual `status` changes allowed only between `inbox`, `todo`, `blocked` (and `done` from `review`, which closes the task **without** merging); anything else → 409.
@@ -265,9 +281,9 @@ Non-blocking traffic between a running agent and the owner (docs/07-task-thread.
 - `GET /api/runs/:id/log?after=<n>` → `{ lines: string[], next: number }` (raw stream-json lines from index `n`)
 
 ### Knowledge
-- `GET /api/knowledge?scope=global|project:<slug>` → `Note[]` (no scope = all)
+- `GET /api/knowledge?scope=global|group:<slug>|project:<slug>` → `Note[]` (no scope = all)
 - `GET /api/knowledge/note?path=<path>` → `{ path, scope, frontmatter: Record<string, unknown>, content: string }` (content = full file including frontmatter)
-- `PUT /api/knowledge/note` body `{ path, content }` → `Note` (creates or replaces; path must be under `knowledge/` or `projects/<slug>/knowledge/`)
+- `PUT /api/knowledge/note` body `{ path, content }` → `Note` (creates or replaces; path must be under `knowledge/`, `groups/<slug>/knowledge/` or `projects/<slug>/knowledge/`)
   - The server sets the frontmatter field `updated` to today's date (`YYYY-MM-DD`, UTC), the same format agents' `save_note` writes. Only that line changes; a note without frontmatter gets a block holding just `updated`. Exception: if the client changed `updated` on purpose (its value differs from the note on disk, or the note is new and carries one), the client's value is kept. So the UI can send the content back as loaded and the date still moves forward.
 - `DELETE /api/knowledge/note?path=<path>` → 204
 - `GET /api/knowledge/search?q=<q>&scope=<scope>` → `{ path, title, scope, snippet: string }[]`
@@ -290,6 +306,8 @@ Non-blocking traffic between a running agent and the owner (docs/07-task-thread.
 | `project.updated` | `Project` (sent when a project is created or edited, or its PROJECT.md changes) |
 | `milestone.updated` | `Milestone` (created or edited, or one of its tasks changed, so progress moved) |
 | `milestone.deleted` | `{ id, project_slug }` |
+| `group.updated` | `Group` (created, renamed, members or GROUP.md changed; member projects also get `project.updated`) |
+| `group.deleted` | `{ slug }` |
 | `schedule.updated` | `Schedule` (created, edited, fired or skipped) |
 | `schedule.deleted` | `{ id, project_slug }` |
 

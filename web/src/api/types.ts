@@ -27,9 +27,30 @@ export interface Project {
   max_parallel: number;
   auto_plan: boolean;
   status: 'active' | 'archived';
+  /** The group (product) this project belongs to, if any. */
+  group_slug: string | null;
   created_at: string;
   updated_at: string;
 }
+
+/** Several projects (e.g. a backend and a frontend repo) that make one product. */
+export interface Group {
+  slug: string;
+  name: string;
+  /** Member project slugs. */
+  projects: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NewGroup {
+  slug: string;
+  name: string;
+  projects?: string[];
+}
+
+/** `projects` replaces the member list exactly. */
+export type GroupPatch = Partial<Pick<Group, 'name' | 'projects'>>;
 
 export interface Task {
   id: string;
@@ -152,6 +173,7 @@ export interface ProjectSummary {
 
 export interface Portfolio {
   projects: ProjectSummary[];
+  groups: Group[];
   totals: { cost_usd: number; cost_last_7_days: number; open_questions: number; in_review: number; running: number };
 }
 
@@ -212,7 +234,7 @@ export interface Commit {
   date: string;
 }
 
-export type NoteScope = 'global' | `project:${string}`;
+export type NoteScope = 'global' | `group:${string}` | `project:${string}`;
 
 export interface Note {
   path: string;
@@ -274,6 +296,7 @@ export interface NewProject {
   setup_command?: string | null;
   max_parallel?: number;
   auto_plan?: boolean;
+  group_slug?: string | null;
 }
 
 export type ProjectPatch = Partial<
@@ -289,6 +312,7 @@ export type ProjectPatch = Partial<
     | 'max_parallel'
     | 'auto_plan'
     | 'status'
+    | 'group_slug'
   >
 >;
 
@@ -328,6 +352,8 @@ export interface SseEvents {
   'run.ended': Run;
   'knowledge.changed': { path: string };
   'project.updated': Project;
+  'group.updated': Group;
+  'group.deleted': { slug: string };
   'milestone.updated': Milestone;
   'milestone.deleted': { id: string; project_slug: string };
   'schedule.updated': Schedule;
@@ -345,6 +371,8 @@ export const SSE_TYPES: SseType[] = [
   'run.ended',
   'knowledge.changed',
   'project.updated',
+  'group.updated',
+  'group.deleted',
   'milestone.updated',
   'milestone.deleted',
   'schedule.updated',

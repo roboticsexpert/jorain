@@ -25,7 +25,19 @@ export interface Project {
   max_parallel: number;
   /** Start a planner task by itself when the project runs out of open work. */
   auto_plan: boolean;
+  /** The group (product) this project belongs to, e.g. backend + frontend; null = on its own. */
+  group_slug: string | null;
   status: 'active' | 'archived';
+  created_at: string;
+  updated_at: string;
+}
+
+/** Several projects that make one product (docs/09-project-groups.md). GROUP.md and group knowledge live in brain/groups/<slug>/. */
+export interface Group {
+  slug: string;
+  name: string;
+  /** Slugs of the projects in the group (archived ones included), by name. */
+  projects: string[];
   created_at: string;
   updated_at: string;
 }
@@ -187,7 +199,7 @@ export interface Commit {
 
 export interface Note {
   path: string;
-  scope: 'global' | `project:${string}`;
+  scope: 'global' | `group:${string}` | `project:${string}`;
   title: string;
   tags: string[];
   updated: string | null;

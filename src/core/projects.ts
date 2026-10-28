@@ -39,6 +39,7 @@ export interface ProjectInput {
   setup_command?: string | null;
   max_parallel?: number;
   auto_plan?: boolean;
+  group_slug?: string | null;
 }
 
 function checkRepoPath(repo: string | null | undefined): string | null {
@@ -47,6 +48,12 @@ function checkRepoPath(repo: string | null | undefined): string | null {
   if (!existsSync(repo) || !statSync(repo).isDirectory()) throw badRequest(`repo_path ${repo} is not a directory`);
   if (!existsSync(path.join(repo, '.git'))) throw badRequest(`repo_path ${repo} is not a git repository`);
   return repo;
+}
+
+function checkGroup(ctx: Ctx, group: string | null | undefined): string | null {
+  if (group == null || group === '') return null;
+  if (typeof group !== 'string' || !ctx.db.prepare('SELECT 1 FROM project_groups WHERE slug = ?').get(group)) throw badRequest(`unknown group ${group}`);
+  return group;
 }
 
 function checkFields(input: Partial<ProjectInput & { status: string }>): void {
@@ -68,11 +75,12 @@ export function createProject(ctx: Ctx, input: ProjectInput): Project {
   if (!input.name?.trim()) throw badRequest('name is required');
   if (findProject(ctx, input.slug)) throw new BrainError(409, 'conflict', `project ${input.slug} already exists`);
   const repo = checkRepoPath(input.repo_path);
+  const group = checkGroup(ctx, input.group_slug);
   const ts = now();
   ctx.db
     .prepare(
-      `INSERT INTO projects (slug, name, repo_path, model, allowed_tools, push_policy, verify_command, setup_command, max_parallel, auto_plan, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+      `INSERT INTO projects (slug, name, repo_path, model, allowed_tools, push_policy, verify_command, setup_command, max_parallel, auto_plan, group_slug, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
     )
     .run(
       input.slug,
@@ -85,6 +93,7 @@ export function createProject(ctx: Ctx, input: ProjectInput): Project {
       input.setup_command?.trim() || null,
       input.max_parallel ?? 1,
       input.auto_plan ? 1 : 0,
+      group,
       ts,
       ts,
     );
@@ -122,6 +131,7 @@ export function updateProject(ctx: Ctx, slug: string, patch: Partial<Omit<Projec
   if (patch.setup_command !== undefined) set('setup_command', patch.setup_command?.trim() || null);
   if (patch.max_parallel !== undefined) set('max_parallel', patch.max_parallel);
   if (patch.auto_plan !== undefined) set('auto_plan', patch.auto_plan ? 1 : 0);
+  if (patch.group_slug !== undefined) set('group_slug', checkGroup(ctx, patch.group_slug));
   if (patch.status !== undefined) set('status', patch.status);
   if (sets.length) {
     set('updated_at', now());

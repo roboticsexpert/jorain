@@ -83,12 +83,16 @@ export function getTask(ctx: Ctx, id: string): TaskRow {
   return t;
 }
 
-export function listTasks(ctx: Ctx, filter: { project?: string; status?: TaskStatus[] } = {}): TaskRow[] {
+export function listTasks(ctx: Ctx, filter: { project?: string; group?: string; status?: TaskStatus[] } = {}): TaskRow[] {
   const where: string[] = [];
   const vals: string[] = [];
   if (filter.project) {
     where.push('t.project_slug = ?');
     vals.push(filter.project);
+  }
+  if (filter.group) {
+    where.push('t.project_slug IN (SELECT slug FROM projects WHERE group_slug = ?)');
+    vals.push(filter.group);
   }
   if (filter.status?.length) {
     where.push(`t.status IN (${filter.status.map(() => '?').join(',')})`);

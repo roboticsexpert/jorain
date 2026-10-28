@@ -1,5 +1,5 @@
 // Seed data for VITE_MOCK=1. Everything lives in memory and resets on reload.
-import type { BrainEvent, Commit, Milestone, Project, Question, Run, Schedule, Task, TaskMessage } from '../api/types';
+import type { BrainEvent, Commit, Group, Milestone, Project, Question, Run, Schedule, Task, TaskMessage } from '../api/types';
 
 const now = Date.now();
 export const ago = (min: number) => new Date(now - min * 60_000).toISOString();
@@ -17,6 +17,7 @@ export const projects: Project[] = [
     max_parallel: 2,
     auto_plan: true,
     status: 'active',
+    group_slug: null,
     created_at: ago(60 * 24 * 3),
     updated_at: ago(60 * 5),
   },
@@ -32,6 +33,7 @@ export const projects: Project[] = [
     max_parallel: 1,
     auto_plan: false,
     status: 'active',
+    group_slug: null,
     created_at: ago(60 * 24 * 20),
     updated_at: ago(60 * 24),
   },
@@ -47,6 +49,7 @@ export const projects: Project[] = [
     max_parallel: 1,
     auto_plan: false,
     status: 'active',
+    group_slug: null,
     created_at: ago(60 * 24 * 40),
     updated_at: ago(60 * 24 * 2),
   },
@@ -62,10 +65,57 @@ export const projects: Project[] = [
     max_parallel: 1,
     auto_plan: false,
     status: 'archived',
+    group_slug: null,
     created_at: ago(60 * 24 * 120),
     updated_at: ago(60 * 24 * 30),
   },
+  {
+    slug: 'shop-api',
+    name: 'Shop backend',
+    repo_path: '/Users/owner/Projects/shop-api',
+    model: null,
+    allowed_tools: [],
+    push_policy: 'never',
+    verify_command: 'pnpm -s test',
+    setup_command: 'pnpm install --frozen-lockfile',
+    max_parallel: 1,
+    auto_plan: false,
+    status: 'active',
+    group_slug: 'shop',
+    created_at: ago(60 * 24 * 10),
+    updated_at: ago(60 * 24),
+  },
+  {
+    slug: 'shop-web',
+    name: 'Shop frontend',
+    repo_path: '/Users/owner/Projects/shop-web',
+    model: null,
+    allowed_tools: [],
+    push_policy: 'never',
+    verify_command: 'pnpm -s lint',
+    setup_command: 'pnpm install --frozen-lockfile',
+    max_parallel: 1,
+    auto_plan: false,
+    status: 'active',
+    group_slug: 'shop',
+    created_at: ago(60 * 24 * 10),
+    updated_at: ago(60 * 24),
+  },
 ];
+
+export const groups: Group[] = [
+  { slug: 'shop', name: 'Shop', projects: ['shop-api', 'shop-web'], created_at: ago(60 * 24 * 10), updated_at: ago(60 * 24) },
+];
+
+export const groupDocs: Record<string, string> = {
+  shop: `# Shop
+
+One product, two repos: **shop-api** (Hono + SQLite, \`/api/*\`) and **shop-web** (React, talks to the API only).
+
+- The API contract lives in the group's knowledge (\`api-contract.md\`). Change it there first.
+- Local URLs: API \`http://localhost:4000\`, web \`http://localhost:5174\`.
+`,
+};
 
 let seq = 100;
 export const newId = (prefix: string) => `${prefix}_${(seq++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -102,6 +152,30 @@ function task(p: Partial<Task> & Pick<Task, 'id' | 'project_slug' | 'title'>, mi
 }
 
 export const tasks: Task[] = [
+  task(
+    {
+      id: 't_shop1a',
+      project_slug: 'shop-api',
+      title: 'Add POST /orders endpoint',
+      body: 'Validate the cart, create the order, return `201 { id, total }`. Contract: groups/shop/knowledge/api-contract.md.',
+      status: 'todo',
+      priority: 3,
+    },
+    60 * 6,
+  ),
+  task(
+    {
+      id: 't_shop2b',
+      project_slug: 'shop-web',
+      title: 'Checkout page submits the order',
+      body: 'Call `POST /orders` from the checkout page and show the confirmation.',
+      status: 'todo',
+      depends_on: ['t_shop1a'],
+      waiting_on: ['t_shop1a'],
+    },
+    60 * 5,
+  ),
+  task({ id: 't_shop3c', project_slug: 'shop-web', title: 'Product grid skeleton loader', status: 'inbox', priority: 1 }, 60 * 4),
   task(
     {
       id: 't_inb01a',
@@ -654,6 +728,19 @@ updated: 2026-09-30
 
 Accent colour is \`#3b6cf6\`. Dark mode follows the system setting.
 `,
+  'groups/shop/knowledge/api-contract.md': `---
+title: API contract
+tags: [api]
+updated: 2026-10-27
+---
+
+# API contract
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /products | – | \`Product[]\` |
+| POST | /orders | \`{ items: { sku, qty }[] }\` | \`201 { id, total }\` |
+`,
   'projects/home-reno/knowledge/budget.md': `---
 title: Budget
 tags: [money]
@@ -669,6 +756,8 @@ export const mcp: Record<string, { project: Record<string, unknown> }> = {
   website: { project: { mcpServers: { playwright: { command: 'npx', args: ['-y', '@playwright/mcp'] } } } },
   'home-reno': { project: {} },
   'old-blog': { project: {} },
+  'shop-api': { project: {} },
+  'shop-web': { project: {} },
 };
 
 export const globalMcp: Record<string, unknown> = {

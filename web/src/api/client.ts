@@ -1,9 +1,12 @@
 import type {
   ActionStatus,
   Answer,
+  Group,
+  GroupPatch,
   McpConfig,
   Milestone,
   MilestonePatch,
+  NewGroup,
   NewMilestone,
   NewProject,
   NewSchedule,
@@ -109,6 +112,15 @@ export const api = {
     request<Task>('POST', `/api/projects/${encodeURIComponent(slug)}/plan`, focus ? { focus } : {}),
   portfolio: () => request<Portfolio>('GET', '/api/portfolio'),
 
+  groups: () => request<Group[]>('GET', '/api/groups'),
+  group: (slug: string) => request<Group>('GET', `/api/groups/${encodeURIComponent(slug)}`),
+  createGroup: (g: NewGroup) => request<Group>('POST', '/api/groups', g),
+  updateGroup: (slug: string, p: GroupPatch) => request<Group>('PATCH', `/api/groups/${encodeURIComponent(slug)}`, p),
+  deleteGroup: (slug: string) => request<void>('DELETE', `/api/groups/${encodeURIComponent(slug)}`),
+  groupDoc: (slug: string) => request<{ content: string }>('GET', `/api/groups/${encodeURIComponent(slug)}/doc`),
+  saveGroupDoc: (slug: string, content: string) =>
+    request<{ content: string }>('PUT', `/api/groups/${encodeURIComponent(slug)}/doc`, { content }),
+
   milestones: (slug: string) => request<Milestone[]>('GET', `/api/projects/${encodeURIComponent(slug)}/milestones`),
   createMilestone: (slug: string, m: NewMilestone) =>
     request<Milestone>('POST', `/api/projects/${encodeURIComponent(slug)}/milestones`, m),
@@ -122,8 +134,9 @@ export const api = {
   runSchedule: (id: string) => request<Task>('POST', `/api/schedules/${id}/run`),
   cronPreview: (cron: string) => request<{ next: string[] }>('GET', `/api/schedules/preview${q({ cron })}`),
 
-  tasks: (f: { project?: string; status?: TaskStatus[] } = {}) =>
-    request<Task[]>('GET', `/api/tasks${q({ project: f.project, status: f.status?.join(',') })}`),
+  /** `group` returns the tasks of every project in that group. */
+  tasks: (f: { project?: string; group?: string; status?: TaskStatus[] } = {}) =>
+    request<Task[]>('GET', `/api/tasks${q({ project: f.project, group: f.group, status: f.status?.join(',') })}`),
   task: (id: string) => request<TaskDetail>('GET', `/api/tasks/${id}`),
   createTask: (t: NewTask) => request<Task>('POST', '/api/tasks', t),
   updateTask: (id: string, p: TaskPatch) => request<Task>('PATCH', `/api/tasks/${id}`, p),
