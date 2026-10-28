@@ -341,6 +341,50 @@ export type TaskPatch = Partial<Pick<Task, 'title' | 'body' | 'priority' | 'stat
   milestone?: string | null;
 };
 
+// Task composer (docs/08-task-composer.md)
+export interface ComposerChat {
+  id: string;
+  project_slug: string;
+  title: string;
+  session_id: string | null;
+  status: 'idle' | 'thinking';
+  cost_usd: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ComposerMessage {
+  id: string;
+  chat_id: string;
+  role: 'owner' | 'assistant' | 'error';
+  body: string;
+  created_at: string;
+}
+
+export interface ComposerDraft {
+  id: string;
+  chat_id: string;
+  title: string;
+  body: string;
+  priority: Priority;
+  /** Milestone id or title. */
+  milestone: string | null;
+  /** Task ids and/or draft ids of the same chat. */
+  depends_on: string[];
+  status: 'draft' | 'created' | 'discarded';
+  task_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ComposerDetail {
+  chat: ComposerChat;
+  messages: ComposerMessage[];
+  drafts: ComposerDraft[];
+}
+
+export type DraftPatch = Partial<Pick<ComposerDraft, 'title' | 'body' | 'priority' | 'milestone' | 'depends_on'>>;
+
 // SSE event map: type -> data
 export interface SseEvents {
   'task.updated': Task;
@@ -358,6 +402,10 @@ export interface SseEvents {
   'milestone.deleted': { id: string; project_slug: string };
   'schedule.updated': Schedule;
   'schedule.deleted': { id: string; project_slug: string };
+  'composer.chat': ComposerChat;
+  'composer.message': ComposerMessage;
+  'composer.draft': ComposerDraft;
+  'composer.deleted': { id: string; project_slug: string };
   status: Status;
 }
 export type SseType = keyof SseEvents;
@@ -377,6 +425,10 @@ export const SSE_TYPES: SseType[] = [
   'milestone.deleted',
   'schedule.updated',
   'schedule.deleted',
+  'composer.chat',
+  'composer.message',
+  'composer.draft',
+  'composer.deleted',
   'status',
 ];
 

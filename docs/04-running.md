@@ -190,6 +190,14 @@ Tools: `overview` (start here), `list_projects`, `add_project`, `list_tasks`, `g
 - Agent sessions never see this server: they run with `--strict-mcp-config`.
 - Optional env: `BRAIN_DIR`, `BRAIN_PORT` as for the server. `BRAIN_CWD` overrides the working directory used to find the current project.
 
+## Compose tasks by chatting
+
+Web UI → **Compose** (or "💬 Compose with Claude" on the Board). Pick the project, describe what you want, and Claude
+(read-only: it reads the repo, PROJECT.md and the board) asks what is unclear and proposes draft tasks next to the chat.
+Edit or discard drafts, or ask for changes in the chat, then **Create** them one by one or with **Create all**, into
+Todo (agents start them) or Inbox. Each reply is a `claude -p` turn on your subscription; logs are in
+`brain/runs/composer/<chat-id>.jsonl`. Details: docs/08-task-composer.md.
+
 ## How a task flows
 
 0. A due schedule (see "Schedules") creates a `todo` task from its template.

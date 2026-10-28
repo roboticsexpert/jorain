@@ -94,7 +94,7 @@ function siblingRules(ctx: Ctx, project: Project): string[] {
 }
 
 /** GROUP.md and the list of parts, for every prompt of a project in a group. */
-function groupSection(ctx: Ctx, project: Project): string[] {
+export function groupSection(ctx: Ctx, project: Project): string[] {
   const group = project.group_slug ? findGroup(ctx, project.group_slug) : undefined;
   if (!group) return [];
   const doc = readGroupDoc(ctx, group.slug).trim();
@@ -139,7 +139,7 @@ export function initialPrompt(ctx: Ctx, task: TaskRow, project: Project, note?: 
 }
 
 /** Open work on the board, one line per task, for the planner. */
-function boardSummary(ctx: Ctx, project: Project, skip: string): string {
+export function boardSummary(ctx: Ctx, project: Project, skip: string): string {
   const milestones = new Map(listMilestones(ctx, project.slug).map((m) => [m.id, m.title]));
   const tasks = listTasks(ctx, { project: project.slug }).filter((t) => t.id !== skip);
   const open = tasks.filter((t) => t.status !== 'done');
@@ -201,5 +201,48 @@ export function planPrompt(ctx: Ctx, task: TaskRow, project: Project, note?: str
   if (existsSync(indexFile)) sections.push('', '## Knowledge index (global)', '', readFileSync(indexFile, 'utf8').trim());
   const thread = threadSoFar(ctx, task.id);
   if (thread) sections.push('', '## Conversation with the owner so far', '', thread);
+  return sections.join('\n');
+}
+
+/** System prompt of a task composer chat (docs/08-task-composer.md), rebuilt every turn so the board is current. */
+export function composerPrompt(ctx: Ctx, project: Project): string {
+  const milestones = listMilestones(ctx, project.slug);
+  const sections = [
+    `You are the task composer for the owner's project "${project.name}" in Second Brain, their task manager. The owner talks ideas through with you here; other agents, each in its own session, later do the tasks you help write. You do not change anything yourself.`,
+    '',
+    'How to work:',
+    '- Talk with the owner. Ask short clarifying questions when the goal, scope or acceptance is unclear; suggest options when that helps. Keep replies short and in plain Markdown.',
+    project.repo_path
+      ? `- Look at the repository (${project.repo_path}) with Read, Glob and Grep to ground tasks in the real code: name the files, modules and conventions an agent should touch.`
+      : '- The project has no repository; use the project folder and the knowledge base for context.',
+    '- When a task is clear enough, propose it with mcp__brain__propose_task: a specific title, a body an agent can follow without this chat (context, what to do, relevant files, "## Acceptance criteria" as a checklist), priority, milestone and depends_on. Split big work into tasks that each fit one agent session (well under 30 minutes) and wire their order with depends_on (draft ids work).',
+    "- The owner reviews drafts next to the chat and creates, edits or discards them. When they ask for changes, use mcp__brain__revise_draft instead of proposing a duplicate. Check mcp__brain__list_drafts when you need the drafts' current state.",
+    '- Check the board below (or mcp__brain__project_board) and do not propose tasks that already exist.',
+    '- After your first proposal, or once the topic is clear, set a short chat title with mcp__brain__set_chat_title.',
+    '- After proposing, say in one or two lines what you proposed and what is still open. Do not repeat the drafts in full in the chat.',
+  ];
+  const projectMd = readProjectFile(ctx, project.slug, 'PROJECT.md');
+  sections.push('', '## PROJECT.md', '', projectMd?.trim() || '_(empty)_');
+  sections.push(...groupSection(ctx, project));
+  const sibs = siblings(ctx, project);
+  if (sibs.length) {
+    sections.push(
+      '',
+      '## Other parts of the product',
+      '',
+      'Propose tasks for this project only. When it needs work from another part, say so to the owner; you can read their repositories and boards (mcp__brain__project_board({ project })).',
+      '',
+      sibs.map((x) => `- ${x.name} (\`${x.slug}\`)${x.repo_path ? `: ${x.repo_path}` : ''}`).join('\n'),
+    );
+  }
+  sections.push(
+    '',
+    '## Milestones',
+    '',
+    milestones.length ? milestones.map((m) => `- ${m.id} [${m.status}] ${m.title} — ${m.done}/${m.total} done${m.description ? `: ${m.description.replace(/\n/g, ' ')}` : ''}`).join('\n') : '_(none yet)_',
+  );
+  sections.push('', '## Board', '', boardSummary(ctx, project, ''));
+  const extra = readProjectFile(ctx, project.slug, 'CLAUDE.md');
+  if (extra?.trim()) sections.push('', '## Project instructions (for the agents that will do the tasks)', '', extra.trim());
   return sections.join('\n');
 }

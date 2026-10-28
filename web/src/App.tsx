@@ -4,6 +4,7 @@ import { Clawd } from './components/ui';
 import { cx } from './lib/util';
 import { useLive } from './live';
 import { BoardPage } from './pages/Board';
+import { ComposePage } from './pages/Compose';
 import { InboxPage } from './pages/Inbox';
 import { KnowledgePage } from './pages/Knowledge';
 import { OverviewPage } from './pages/Overview';
@@ -28,6 +29,9 @@ export function App() {
           <NavLink to="/board">
             <span aria-hidden="true">🗂️</span> Board
           </NavLink>
+          <NavLink to="/compose">
+            <span aria-hidden="true">💬</span> Compose
+          </NavLink>
           <NavLink to="/inbox">
             <span aria-hidden="true">📬</span> Inbox
             {inboxCount > 0 && (
@@ -51,6 +55,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<OverviewPage />} />
           <Route path="/board" element={<BoardPage />} />
+          <Route path="/compose" element={<ComposePage />} />
           <Route path="/inbox" element={<InboxPage />} />
           <Route path="/schedules" element={<SchedulesPage />} />
           <Route path="/knowledge" element={<KnowledgePage />} />

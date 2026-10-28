@@ -272,6 +272,19 @@ Non-blocking traffic between a running agent and the owner (docs/07-task-thread.
 - `POST /api/messages/:id/resolve` body `{ status: 'done' | 'declined', note? }` → `{ message, task }`. The resolution is pending for the agent like a message; a task waiting for it resumes. 409 if already resolved, 400 if not an action.
 - Open actions do not block review or approve.
 
+### Task composer
+A chat per project that drafts tasks (docs/08-task-composer.md). `ComposerChat { id, project_slug, title, session_id, status: 'idle'|'thinking', cost_usd, created_at, updated_at }`, `ComposerMessage { id, chat_id, role: 'owner'|'assistant'|'error', body, created_at }`, `ComposerDraft { id, chat_id, title, body, priority, milestone (id or title), depends_on (task ids and/or draft ids of the chat), status: 'draft'|'created'|'discarded', task_id, created_at, updated_at }`.
+- `GET /api/composer/chats?project=<slug>` → `ComposerChat[]` (newest first)
+- `POST /api/composer/chats` body `{ project, title?, message? }` → `{ chat, messages, drafts }` (201). With `message`, the first turn starts right away.
+- `GET /api/composer/chats/:id` → `{ chat, messages, drafts }`
+- `DELETE /api/composer/chats/:id` → 204 (409 while it is thinking). Created tasks stay.
+- `POST /api/composer/chats/:id/messages` body `{ body }` → `{ chat, message }` (201). Starts a turn in the background; the reply arrives as a `composer.message` event. 409 while the previous turn runs.
+- `POST /api/composer/chats/:id/stop` → `ComposerChat` (kills the running turn; an `error` message "Stopped." follows)
+- `POST /api/composer/chats/:id/create-all` body `{ status?: 'todo'|'inbox' }` (default todo) → `{ tasks, drafts }`: every open draft, dependencies first
+- `PATCH /api/composer/drafts/:id` body any of `{ title, body, priority, milestone, depends_on }` → `ComposerDraft` (409 unless open)
+- `POST /api/composer/drafts/:id/create` body `{ status?: 'todo'|'inbox' }` → `{ draft, task }`. 409 if it depends on a draft not created yet. A dependency on a discarded draft is dropped.
+- `POST /api/composer/drafts/:id/discard` → `ComposerDraft`
+
 ### Questions
 - `GET /api/questions?open=true` → `Question[]` (open = unanswered; newest first)
 - `POST /api/questions/:id/answer` body `{ answers: { question: string; answer: string }[] }` → `Question` (stores the answer, resumes the session). 409 if already answered.
@@ -310,6 +323,10 @@ Non-blocking traffic between a running agent and the owner (docs/07-task-thread.
 | `group.deleted` | `{ slug }` |
 | `schedule.updated` | `Schedule` (created, edited, fired or skipped) |
 | `schedule.deleted` | `{ id, project_slug }` |
+| `composer.chat` | `ComposerChat` (created, title/status/cost changed) |
+| `composer.message` | `ComposerMessage` |
+| `composer.draft` | `ComposerDraft` (proposed, edited, created or discarded) |
+| `composer.deleted` | `{ id, project_slug }` |
 
 Missed events are not replayed: messages carry no `id`, and the server ignores `Last-Event-ID` (`run.log`, `status` and `project.updated` are never stored, so a full replay would not be possible). Clients refetch instead. The server sends `status` as the first message of every connection. After the browser's `EventSource` reconnects, the web UI refetches the inbox count and whatever the open view shows (board, inbox, knowledge tree and note, projects, task drawer, run log), through `useReconnect` in `web/src/live.tsx`.
 

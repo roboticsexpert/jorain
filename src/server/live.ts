@@ -4,6 +4,7 @@ import { findMilestone } from '../core/milestones.ts';
 import { findGroup } from '../core/groups.ts';
 import { findProject } from '../core/projects.ts';
 import { findMessage } from '../core/messages.ts';
+import { findChat, findChatMessage, findDraft } from '../core/composer.ts';
 import { findQuestion } from '../core/questions.ts';
 import { findTask, toPublicTask } from '../core/tasks.ts';
 import { getRun } from '../core/runs.ts';
@@ -28,7 +29,17 @@ export function startEventRelay(ctx: Ctx, intervalMs = 1500): () => void {
         } else if (e.type === 'message.created' || e.type === 'message.updated') {
           const m = findMessage(ctx, p.message_id);
           if (m) publish('task.message', m);
-        } else if (e.type === 'run.started' || e.type === 'run.ended') publish(e.type, getRun(ctx, p.run_id));
+        } else if (e.type === 'composer.chat') {
+          const ch = findChat(ctx, p.chat_id);
+          if (ch) publish('composer.chat', ch);
+        } else if (e.type === 'composer.message') {
+          const m = findChatMessage(ctx, p.message_id);
+          if (m) publish('composer.message', m);
+        } else if (e.type === 'composer.draft') {
+          const d = findDraft(ctx, p.draft_id);
+          if (d) publish('composer.draft', d);
+        } else if (e.type === 'composer.deleted') publish('composer.deleted', { id: p.chat_id, project_slug: p.project });
+        else if (e.type === 'run.started' || e.type === 'run.ended') publish(e.type, getRun(ctx, p.run_id));
         else if (e.type === 'milestone.created' || e.type === 'milestone.edited') {
           const m = findMilestone(ctx, p.id);
           if (m) publish('milestone.updated', m);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import type { Milestone, Project, Task, TaskStatus } from '../api/types';
 import { BOARD_STATUSES, SIDE_STATUSES, STATUS_LABEL } from '../api/types';
@@ -220,6 +220,9 @@ export function BoardPage() {
         <button type="button" className={cx('btn-ghost', sideOpen && 'on')} onClick={toggleSide} aria-expanded={sideOpen}>
           🚧 Blocked &amp; failed <span className="count">{sideCount}</span>
         </button>
+        <Link className="btn-ghost" to={`/compose${projectFilter ? `?project=${encodeURIComponent(projectFilter)}` : ''}`}>
+          💬 Compose with Claude
+        </Link>
         <button type="button" className="btn-primary" onClick={() => setCreating(true)}>
           + New task
         </button>

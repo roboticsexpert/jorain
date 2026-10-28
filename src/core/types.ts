@@ -219,3 +219,40 @@ export class BrainError extends Error {
 export const notFound = (what: string) => new BrainError(404, 'not_found', `${what} not found`);
 export const badRequest = (message: string) => new BrainError(400, 'bad_request', message);
 export const conflict = (message: string) => new BrainError(409, 'conflict', message);
+
+/** Task composer (docs/08-task-composer.md): a chat per project that drafts tasks. */
+export interface ComposerChat {
+  id: string;
+  project_slug: string;
+  title: string;
+  session_id: string | null;
+  status: 'idle' | 'thinking';
+  cost_usd: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ComposerMessage {
+  id: string;
+  chat_id: string;
+  role: 'owner' | 'assistant' | 'error';
+  body: string;
+  created_at: string;
+}
+
+export type DraftStatus = 'draft' | 'created' | 'discarded';
+
+export interface ComposerDraft {
+  id: string;
+  chat_id: string;
+  title: string;
+  body: string;
+  priority: Priority;
+  milestone: string | null;
+  /** Task ids and/or draft ids of the same chat. */
+  depends_on: string[];
+  status: DraftStatus;
+  task_id: string | null;
+  created_at: string;
+  updated_at: string;
+}

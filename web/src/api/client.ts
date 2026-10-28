@@ -1,5 +1,10 @@
 import type {
   ActionStatus,
+  ComposerChat,
+  ComposerDetail,
+  ComposerDraft,
+  ComposerMessage,
+  DraftPatch,
   Answer,
   Group,
   GroupPatch,
@@ -126,6 +131,20 @@ export const api = {
     request<Milestone>('POST', `/api/projects/${encodeURIComponent(slug)}/milestones`, m),
   updateMilestone: (id: string, p: MilestonePatch) => request<Milestone>('PATCH', `/api/milestones/${id}`, p),
   deleteMilestone: (id: string) => request<void>('DELETE', `/api/milestones/${id}`),
+
+  composerChats: (project?: string) => request<ComposerChat[]>('GET', `/api/composer/chats${q({ project })}`),
+  composerChat: (id: string) => request<ComposerDetail>('GET', `/api/composer/chats/${id}`),
+  createComposerChat: (project: string, message?: string) => request<ComposerDetail>('POST', '/api/composer/chats', { project, message }),
+  deleteComposerChat: (id: string) => request<void>('DELETE', `/api/composer/chats/${id}`),
+  sendComposer: (id: string, body: string) =>
+    request<{ chat: ComposerChat; message: ComposerMessage }>('POST', `/api/composer/chats/${id}/messages`, { body }),
+  stopComposer: (id: string) => request<ComposerChat>('POST', `/api/composer/chats/${id}/stop`),
+  createAllDrafts: (id: string, status: 'inbox' | 'todo') =>
+    request<{ tasks: Task[]; drafts: ComposerDraft[] }>('POST', `/api/composer/chats/${id}/create-all`, { status }),
+  updateDraft: (id: string, p: DraftPatch) => request<ComposerDraft>('PATCH', `/api/composer/drafts/${id}`, p),
+  createFromDraft: (id: string, status: 'inbox' | 'todo') =>
+    request<{ draft: ComposerDraft; task: Task }>('POST', `/api/composer/drafts/${id}/create`, { status }),
+  discardDraft: (id: string) => request<ComposerDraft>('POST', `/api/composer/drafts/${id}/discard`),
 
   schedules: (project?: string) => request<Schedule[]>('GET', `/api/schedules${q({ project })}`),
   createSchedule: (s: NewSchedule) => request<Schedule>('POST', '/api/schedules', s),
