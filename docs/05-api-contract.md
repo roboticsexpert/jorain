@@ -54,7 +54,26 @@ interface Task {
   worktree: string | null;               // path of the task's git worktree while it has one (removed when done)
   verify_status: VerifyStatus | null;    // result of the project's verify_command after the last run
   schedule_id: string | null;            // the schedule that queued it (null after that schedule is deleted)
+  // Task thread; see "Task thread" below.
+  waiting_for: { tool_use_id: string; action_id: string | null; since: string } | null;  // set while parked on wait_for_owner
+  open_actions: number;                  // agent to-dos for the owner still open
+  unread_updates: number;                // agent updates the owner has not read
   created_at: string; updated_at: string;
+}
+
+interface TaskMessage {                  // one entry of a task's thread
+  id: string;                            // "m_…"
+  task_id: string; task_title: string; project_slug: string;
+  author: 'agent' | 'owner';
+  kind: 'update' | 'action' | 'message'; // update = material to look at · action = to-do for the owner · message = owner chat
+  title: string;                         // updates and actions; '' for owner messages
+  body: string;                          // markdown
+  status: 'open' | 'done' | 'declined' | null;   // actions only
+  note: string | null;                   // the owner's note when resolving an action
+  created_at: string;
+  read_at: string | null;                // agent messages: when the owner saw them
+  delivered_at: string | null;           // when the agent got this row's latest owner input; null = pending
+  resolved_at: string | null;
 }
 
 interface Schedule {                     // see "Schedules" below
@@ -191,7 +210,7 @@ How they fire (`src/core/schedules.ts`, every scheduler tick):
 ### Tasks
 - `GET /api/tasks?project=<slug>&status=<status,status>` → `Task[]` (newest first; both filters optional)
 - `POST /api/tasks` body `{ project_slug, title, body?, priority?, status?, depends_on?, milestone? }` → `Task` (201). `status` may only be `inbox` (default, waits for the owner) or `todo` (the scheduler starts it). `milestone` is a milestone id or title of that project.
-- `GET /api/tasks/:id` → `{ task: Task, questions: Question[], runs: Run[], commits: Commit[], events: Event[] }`
+- `GET /api/tasks/:id` → `{ task: Task, questions: Question[], runs: Run[], commits: Commit[], events: Event[], messages: TaskMessage[] }` (messages oldest first)
 - `PATCH /api/tasks/:id` body: subset of `title, body, priority, status, depends_on, milestone` (`milestone`: id, title or null; `depends_on` replaces the list; 400 for an unknown task, the task itself, or a cycle) → `Task`. Manual `status` changes allowed only between `inbox`, `todo`, `blocked` (and `done` from `review`, which closes the task **without** merging); anything else → 409.
 - `POST /api/tasks/:id/start` → `Task` (from `inbox`/`todo`/`blocked`/`failed`; starts a run now). 409 while `waiting_on` is not empty.
 - `POST /api/tasks/:id/approve` → `Task` (`review` → `done`). For a task with commits on its branch this first squash-merges the branch into its base branch, then pushes when the project's `push_policy` is `after_merge` (see "Delivery"). 409 (task stays in `review`) on a merge conflict, when the base branch is checked out with uncommitted changes to files the task changes, or when the task or base branch is gone. A failed push does not fail the request: the task is `done`, merged, with `push_error` set.
@@ -228,6 +247,15 @@ How they fire (`src/core/schedules.ts`, every scheduler tick):
 - The scheduler never starts a task with an unmet dependency, and neither does `start`. Once its dependencies are merged, the task branches from the current branch as usual, so it sees their work.
 - A follow-up an agent creates with `create_task` depends on the agent's own task by default. The agent passes `depends_on: []` for independent work.
 
+### Task thread
+Non-blocking traffic between a running agent and the owner (docs/07-task-thread.md). Agents post with the brain tools `post_update`, `request_action` and `wait_for_owner`.
+- `GET /api/tasks/:id/messages` → `TaskMessage[]` (oldest first)
+- `POST /api/tasks/:id/messages` body `{ body }` → `{ message, task }` (201). What happens depends on the task: `in_progress` → delivered at the agent's next tool call by the PostToolUse hook (or the run continues with it if it ends first, event `task.owner_input_continue`); `waiting_for_human` on `wait_for_owner` → resumes; `review` → resumes the session with the message (like request changes); `inbox`/`todo`/`blocked`/`failed` → goes into the next start's prompt; a question pause → delivered after the answer. 409 for a `done` task.
+- `POST /api/tasks/:id/messages/read` → `{ marked }` (the owner has seen the agent's messages)
+- `GET /api/messages` → `TaskMessage[]` for the Inbox: open actions and unread updates across tasks, newest first
+- `POST /api/messages/:id/resolve` body `{ status: 'done' | 'declined', note? }` → `{ message, task }`. The resolution is pending for the agent like a message; a task waiting for it resumes. 409 if already resolved, 400 if not an action.
+- Open actions do not block review or approve.
+
 ### Questions
 - `GET /api/questions?open=true` → `Question[]` (open = unanswered; newest first)
 - `POST /api/questions/:id/answer` body `{ answers: { question: string; answer: string }[] }` → `Question` (stores the answer, resumes the session). 409 if already answered.
@@ -252,6 +280,7 @@ How they fire (`src/core/schedules.ts`, every scheduler tick):
 | `task.updated` | `Task` |
 | `question.created` | `Question` |
 | `question.answered` | `Question` |
+| `task.message` | `TaskMessage` (created, resolved, or delivered) |
 | `run.started` | `Run` |
 | `run.log` | `{ run_id, index, line }` |
 | `run.ended` | `Run` |
@@ -274,7 +303,7 @@ A heartbeat comment (`: ping`) every 25 s. Changes made by other processes (the 
 |---|---|
 | `task.created` | `{ source: 'owner' \| 'agent:<task-id>' \| 'schedule:<schedule-id>', status }` |
 | `schedule.fired` | `{ id, manual }` (on the task the schedule queued) |
-| `task.status` | `{ from, to, action?, by?, run_id?, stop_reason?, reason?, via? }` (`via`: `hook_defer` or `ask_human_tool` when parked for a question) |
+| `task.status` | `{ from, to, action?, by?, run_id?, stop_reason?, reason?, via? }` (`via`: `hook_defer` or `ask_human_tool` when parked for a question, `wait_for_owner` / `wait_for_owner_tool` when parked on the owner; `action`: `owner_input` / `owner_message` when the owner's input resumed it) |
 | `task.edited` | the changed fields |
 | `task.changes_requested` | `{ note }` |
 | `task.autocommit` | `{ run_id, sha }` (leftover changes committed after a run) |
@@ -288,6 +317,10 @@ A heartbeat comment (`: ping`) every 25 s. Changes made by other processes (the 
 | `task.pushed` | `{ branch, remote }` |
 | `task.push_failed` | `{ branch, error }` |
 | `question.created` / `question.answered` | `{ question_id }` |
+| `message.created` / `message.updated` | `{ message_id, kind, author }` |
+| `message.delivered` | `{ message_id }` (the agent got it) |
+| `message.read` | `{ count }` |
+| `task.owner_input_continue` | `{ run_id }` (a message arrived after the agent's last tool call; the run continued with it) |
 | `run.started` | `{ run_id, kind }` |
 | `run.ended` | `{ run_id, stop_reason, exit_code, cost_usd }` |
 

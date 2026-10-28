@@ -1,5 +1,6 @@
 import type { Ctx } from '../core/context.ts';
 import { createPlanTask, needsPlanning } from '../core/planning.ts';
+import { waitSatisfied } from '../core/messages.ts';
 import { listQuestions } from '../core/questions.ts';
 import { getProject, listProjects } from '../core/projects.ts';
 import { fireDue } from '../core/schedules.ts';
@@ -10,7 +11,7 @@ import { removeWorkspace } from './workspace.ts';
 
 /**
  * Every tick: queue the tasks of schedules that are due, resume tasks whose questions are all answered
- * (e.g. answered from the CLI), queue a planner
+ * (e.g. answered from the CLI) or whose wait_for_owner is satisfied, queue a planner
  * task for auto_plan projects that ran out of work, start the highest-priority `todo` auto tasks while
  * global concurrency and each project's max_parallel allow, and remove worktrees of finished tasks.
  */
@@ -76,15 +77,26 @@ export class Scheduler {
     }
   }
 
-  /** waiting_for_human tasks with no open question left: the answer was stored but the session not resumed yet. */
+  /**
+   * waiting_for_human tasks whose question is answered, or whose wait_for_owner has the owner's input,
+   * but whose session was not resumed yet (stored from another process, or the project was at capacity).
+   */
   private resumeAnswered(): void {
     for (const t of listTasks(this.ctx, { status: ['waiting_for_human'] })) {
       if (this.orch.busyProjects().has(t.project_slug) || this.orch.runningCount() >= this.ctx.cfg.concurrency) continue;
-      const qs = listQuestions(this.ctx, { taskId: t.id });
-      if (!qs.length || qs.some((q) => !q.answered_at)) continue;
+      let after: 'an answer' | 'owner input';
+      if (t.waiting_for) {
+        if (!waitSatisfied(this.ctx, t)) continue;
+        after = 'owner input';
+      } else {
+        const qs = listQuestions(this.ctx, { taskId: t.id });
+        if (!qs.length || qs.some((q) => !q.answered_at)) continue;
+        after = 'an answer';
+      }
       try {
-        this.orch.resumeAfterAnswer(t.id);
-        console.log(`[scheduler] resumed ${t.id} after an answer`);
+        if (after === 'owner input') this.orch.resumeAfterWait(t.id);
+        else this.orch.resumeAfterAnswer(t.id);
+        console.log(`[scheduler] resumed ${t.id} after ${after}`);
       } catch (err) {
         if (err instanceof BrainError) this.warn(`resume:${t.id}`, `could not resume ${t.id}: ${err.message}`);
         else throw err;

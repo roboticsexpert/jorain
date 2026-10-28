@@ -253,7 +253,7 @@ function Column({
           return (
           <button key={t.id} type="button" className={cx('task-card', `card-${t.status}`)} aria-label={t.title} onClick={() => onOpen(t.id)}>
             {t.status === 'in_progress' && <WorkingChip />}
-            {t.status === 'waiting_for_human' && <span className="needs-you">🙋 Needs your answer</span>}
+            {t.status === 'waiting_for_human' && <span className="needs-you">{t.waiting_for ? '📌 Waiting for you' : '🙋 Needs your answer'}</span>}
             <span className="task-title">{t.title}</span>
             <span className="task-badges">
               <PlannerBadge task={t} />
@@ -261,6 +261,16 @@ function Column({
               <GitBadge task={t} />
               <VerifyBadge task={t} />
               <WaitingBadge task={t} />
+              {t.open_actions > 0 && (
+                <span className="badge q" title="To-dos Claude handed you">
+                  📌 {t.open_actions}
+                </span>
+              )}
+              {t.unread_updates > 0 && (
+                <span className="badge running" title="Updates from Claude you have not read">
+                  📣 {t.unread_updates}
+                </span>
+              )}
               {t.question_count > 0 && (
                 <span className="badge q" title="Questions asked">
                   💬 {t.question_count}

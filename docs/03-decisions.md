@@ -62,6 +62,14 @@ Scheduled tasks (owner's request, 2026-10-23; built in the same session, default
 | D19 | **A recurring task gets the previous run's result** in its prompt and is asked what changed. | "Check whether X happened" is only useful relative to last time. |
 | D20 | **No task modes (auto/assisted removed, 2026-10-24).** The column says what happens: `inbox` waits for the owner to read it, `todo` is started by the scheduler. Migration 0006 drops `tasks.mode`, `schedules.mode`, `projects.default_mode`; assisted tasks that were in `todo` went back to the inbox so nothing (e.g. production rollouts) started unasked. | Owner's call: two knobs for one decision was confusing; an assisted task in todo looked queued but never ran. |
 
+Task thread (owner's request, 2026-10-28; details in [07-task-thread.md](07-task-thread.md); defaults chosen by Claude, the owner may revisit):
+
+| # | Decision | Reason |
+|---|---|---|
+| D21 | **A message to a task in review resumes it right away**, like request changes. | One way to talk to the session, whatever its state. |
+| D22 | **Open agent to-dos (actions) don't block review or approve.** | They are often things that happen after the work (pay, post); blocking would leave tasks stuck. |
+| D23 | **Owner messages reach a running session through a PostToolUse hook** (`additionalContext`), not a stdin pipe. No chat-channel mirror yet. | No change to how runs are spawned or resumed; verified against CLI 2.1.310. |
+
 ## Open questions for the owner
 
 | # | Question | Why it matters | Proposed default |

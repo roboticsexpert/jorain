@@ -15,6 +15,7 @@ import { APP_ROOT, loadConfig } from '../config.ts';
 import { createCtx, type Ctx } from '../core/context.ts';
 import { listEvents } from '../core/events.ts';
 import { parseScope, readNote, saveNote, searchKnowledge, type Scope } from '../core/knowledge.ts';
+import { getMessage, inboxMessages, listMessages, markRead } from '../core/messages.ts';
 import { createMilestone, listMilestones, resolveMilestone, updateMilestone } from '../core/milestones.ts';
 import { createPlanTask } from '../core/planning.ts';
 import { portfolio } from '../core/portfolio.ts';
@@ -23,7 +24,7 @@ import { getQuestion, listQuestions, openQuestionForTask, resolveAnswers } from 
 import { digestLogLine, listRuns, readRunLog } from '../core/runs.ts';
 import { createSchedule, deleteSchedule, fireSchedule, listSchedules, updateSchedule } from '../core/schedules.ts';
 import { createTask, getTask, listTasks, toPublicTask, updateTask } from '../core/tasks.ts';
-import { BrainError, TASK_STATUSES, type Project, type Question, type Schedule } from '../core/types.ts';
+import { BrainError, TASK_STATUSES, type Project, type Question, type Schedule, type TaskMessage } from '../core/types.ts';
 import * as deliver from '../runner/deliver.ts';
 import * as git from '../runner/git.ts';
 import { api, serverBase, serverUp } from '../server/client.ts';
@@ -61,6 +62,16 @@ function formatQuestion(q: Question): string {
     item.options.forEach((o, j) => lines.push(`     ${j + 1}) ${o.label}${o.description ? ` — ${o.description}` : ''}`));
   });
   return lines.join('\n');
+}
+
+function formatMessage(m: TaskMessage): string {
+  const who = m.author === 'agent' ? (m.kind === 'action' ? `to-do for the owner [${m.status}]` : m.kind) : 'owner';
+  const head = `${m.id} · ${localTime(m.created_at)} · ${who}${m.title ? `: ${m.title}` : ''}`;
+  const parts = [head];
+  if (m.body) parts.push(m.body.replace(/^/gm, '    '));
+  if (m.note) parts.push(`    owner's note: ${m.note}`);
+  if (m.author === 'owner' && !m.delivered_at) parts.push('    (not delivered to the agent yet)');
+  return parts.join('\n');
 }
 
 export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
@@ -118,6 +129,9 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
         '',
         'open questions:',
         ...(listQuestions(ctx, { open: true }).map(formatQuestion).join('\n\n') || '  none').split('\n'),
+        '',
+        'to-dos and unread updates from agents:',
+        ...(inboxMessages(ctx).map((m) => `  ${m.task_id} (${m.project_slug}) ${formatMessage(m).replace(/\n/g, '\n  ')}`).join('\n') || '  none').split('\n'),
         '',
         'active tasks:',
         ...(tasks.length ? tasks.map((t) => `  ${t.id}  ${t.status}  ${t.project_slug}  ${t.title}`) : ['  none']),
@@ -342,7 +356,49 @@ export function buildOwnerServer(ctx: Ctx, env: { cwd: string }): McpServer {
       const t = getTask(ctx, id);
       const p = getProject(ctx, t.project_slug);
       const commits = p.repo_path && t.branch && t.base_sha ? git.commitsBetween(p.repo_path, t.base_sha, t.branch) : [];
-      return json({ task: toPublicTask(t), questions: listQuestions(ctx, { taskId: id }), runs: listRuns(ctx, id), commits, events: listEvents(ctx, id).slice(-15) });
+      return json({ task: toPublicTask(t), questions: listQuestions(ctx, { taskId: id }), messages: listMessages(ctx, id), runs: listRuns(ctx, id), commits, events: listEvents(ctx, id).slice(-15) });
+    }),
+  );
+
+  server.registerTool(
+    'task_thread',
+    {
+      description:
+        "A task's thread, oldest first: updates the agent shared (drafts, findings), to-dos it handed the owner (open / done / declined), and the owner's messages. Reading it marks the agent's updates as read.",
+      inputSchema: { id: z.string() },
+    },
+    tool(({ id }) => {
+      const t = getTask(ctx, id);
+      const msgs = listMessages(ctx, id);
+      markRead(ctx, id);
+      const head = `${t.id} [${t.status}] ${t.title}${t.waiting_for ? ` — the agent is waiting for ${t.waiting_for.action_id ?? 'a message from the owner'}` : ''}`;
+      return text([head, '', ...(msgs.length ? msgs.map(formatMessage) : ['No messages yet.'])].join('\n\n'));
+    }),
+  );
+
+  server.registerTool(
+    'send_message',
+    {
+      description:
+        "Write to a task's agent in the owner's words (feedback, extra context, a change of plan). Running: it reaches the agent at its next tool call. In review: the session resumes with it. Waiting for the owner: it resumes. Not started: it goes into the first prompt. Only send what the owner said. Needs the server.",
+      inputSchema: { id: z.string(), text: z.string().min(1) },
+    },
+    tool(async ({ id, text: body }) => {
+      const r = await viaServer('POST', `/tasks/${id}/messages`, { body });
+      return text(`Sent ${r.message.id}; ${id} is ${r.task.status}.`);
+    }),
+  );
+
+  server.registerTool(
+    'resolve_action',
+    {
+      description: "Mark a to-do an agent handed the owner as done or declined, with an optional note the agent gets (e.g. a receipt link, or why not). Only on the owner's word. A task waiting for it resumes. Needs the server.",
+      inputSchema: { id: z.string().describe('The action id (m_…).'), status: z.enum(['done', 'declined']), note: z.string().optional() },
+    },
+    tool(async ({ id, status, note }) => {
+      getMessage(ctx, id);
+      const r = await viaServer('POST', `/messages/${id}/resolve`, { status, note });
+      return text(`${id} is ${r.message.status}; task ${r.task.id} is ${r.task.status}.`);
     }),
   );
 

@@ -7,8 +7,9 @@ Pages: **Overview** (landing page, `GET /api/portfolio`: a totals strip plus one
 project with task counts, open questions, open-milestone progress bars, cost last 7 days / total, a
 "planning…" badge and a "Plan next steps" button; clicking a project opens its board), **Board**
 (columns per status, project + milestone filters, task drawer with live run log, questions,
-commits/diff, checks output, milestone select, "Update from base" and actions), **Inbox** (open
-questions + tasks in review), **Knowledge** (notes by scope, Markdown view/edit, search),
+commits/diff, checks output, milestone select, "Update from base", actions, and a "Conversation"
+thread: Claude's updates and to-dos with Done/Decline + note, and a box to write to Claude), **Inbox** (open
+questions, to-dos and unread updates from Claude, tasks in review), **Knowledge** (notes by scope, Markdown view/edit, search),
 **Schedules** (one-off and repeating task templates: list with next/last run and a link to
 the last task, on/off switch, Run now, edit/delete; a form with a repeat picker or custom cron and a
 preview of the next 3 runs from `GET /api/schedules/preview`), **Projects** (create/edit/archive; settings incl. verify/setup commands, parallel tasks and

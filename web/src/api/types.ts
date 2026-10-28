@@ -55,8 +55,40 @@ export interface Task {
   worktree: string | null;
   verify_status: VerifyStatus | null;
   schedule_id: string | null;
+  /** Set while the agent waits for the owner (wait_for_owner): for one action, or for any message. */
+  waiting_for: WaitFor | null;
+  /** Agent to-dos for the owner still open, and agent updates not read yet. */
+  open_actions: number;
+  unread_updates: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface WaitFor {
+  tool_use_id: string;
+  action_id: string | null;
+  since: string;
+}
+
+export type MessageKind = 'update' | 'action' | 'message';
+export type ActionStatus = 'open' | 'done' | 'declined';
+
+/** One entry of a task's thread: an agent update or to-do, or an owner message. */
+export interface TaskMessage {
+  id: string;
+  task_id: string;
+  task_title: string;
+  project_slug: string;
+  author: 'agent' | 'owner';
+  kind: MessageKind;
+  title: string;
+  body: string;
+  status: ActionStatus | null;
+  note: string | null;
+  created_at: string;
+  read_at: string | null;
+  delivered_at: string | null;
+  resolved_at: string | null;
 }
 
 export interface Milestone {
@@ -217,6 +249,7 @@ export interface TaskDetail {
   runs: Run[];
   commits: Commit[];
   events: BrainEvent[];
+  messages: TaskMessage[];
 }
 
 export interface McpConfig {
@@ -289,6 +322,7 @@ export interface SseEvents {
   'task.updated': Task;
   'question.created': Question;
   'question.answered': Question;
+  'task.message': TaskMessage;
   'run.started': Run;
   'run.log': { run_id: string; index: number; line: string };
   'run.ended': Run;
@@ -305,6 +339,7 @@ export const SSE_TYPES: SseType[] = [
   'task.updated',
   'question.created',
   'question.answered',
+  'task.message',
   'run.started',
   'run.log',
   'run.ended',

@@ -10,9 +10,10 @@ import { createCtx, type Ctx } from '../core/context.ts';
 import { saveNote, searchKnowledge, type Scope } from '../core/knowledge.ts';
 import { createMilestone, listMilestones } from '../core/milestones.ts';
 import { findProject, writeProjectDoc } from '../core/projects.ts';
+import { listMessages, postAgentMessage, takePending, waitReady } from '../core/messages.ts';
 import { createQuestion, listQuestions } from '../core/questions.ts';
 import { newId } from '../db/client.ts';
-import { createTask, findTask, listTasks, toPublicTask, updateTask } from '../core/tasks.ts';
+import { createTask, findTask, listTasks, setWaitingFor, toPublicTask, updateTask } from '../core/tasks.ts';
 import { BrainError } from '../core/types.ts';
 import { listEvents } from '../core/events.ts';
 
@@ -61,6 +62,56 @@ export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }
       return text(
         `Question ${q.id} was sent to the owner. Stop working now: end your turn with one short sentence saying you are waiting for the answer. Do not guess the answer and do not continue the task; the session will be resumed with the owner's reply.`,
       );
+    },
+  );
+
+  server.registerTool(
+    'post_update',
+    {
+      description:
+        "Share something with the owner without stopping: drafts, options you found, numbers, a plan, a link, progress worth knowing. It shows up in the task's thread and the owner's Inbox; the owner may reply, and replies reach you as Second Brain context after a later tool call. Keep working after posting. Use ask_human only when you cannot continue without a decision.",
+      inputSchema: {
+        title: z.string().min(1).describe('Short headline, e.g. "Ad drafts (3)" or "Candidate channels".'),
+        body: z.string().optional().describe('The material itself, in Markdown (lists and tables are fine).'),
+      },
+    },
+    async ({ title, body }) => {
+      if (!env.taskId) return fail('No task is attached to this session.');
+      return attempt(() => postAgentMessage(ctx, env.taskId!, { kind: 'update', title, body }), (m) => `Posted ${m.id} to the owner. Keep working.`);
+    },
+  );
+
+  server.registerTool(
+    'request_action',
+    {
+      description:
+        "Hand the owner a to-do that only they can do (pay, sign, log in, send from their own account, give access, decide offline...). It goes on the owner's list for this task; the session keeps running. Say exactly what to do and what to send back. When the owner marks it done or declined, you get their note as Second Brain context. If you cannot go on without it, call wait_for_owner with the returned id.",
+      inputSchema: {
+        title: z.string().min(1).describe('The to-do, imperative, e.g. "Pay @channel_admin 40 USDT".'),
+        body: z.string().optional().describe('Details: why, how, and what to reply with.'),
+      },
+    },
+    async ({ title, body }) => {
+      if (!env.taskId) return fail('No task is attached to this session.');
+      return attempt(() => postAgentMessage(ctx, env.taskId!, { kind: 'action', title, body }), (m) => `Action ${m.id} is on the owner's list. Continue with other work; call wait_for_owner({ action_id: "${m.id}" }) only when you are blocked on it.`);
+    },
+  );
+
+  server.registerTool(
+    'wait_for_owner',
+    {
+      description:
+        'Pause until the owner resolves one of your actions (action_id) or, without action_id, until the owner writes anything. Only use it when you truly cannot do anything else first. Make it the only tool call in its message. The session pauses (possibly for hours) and the owner\'s input comes back as this tool result.',
+      inputSchema: { action_id: z.string().optional(), reason: z.string().optional().describe('One sentence the owner sees: what you are waiting for.') },
+    },
+    async ({ action_id }) => {
+      if (!env.taskId) return fail('No task is attached to this session.');
+      if (waitReady(ctx, env.taskId, action_id)) {
+        return text(takePending(ctx, env.taskId) ?? 'The action was already resolved or no longer exists. Continue the task.');
+      }
+      // Reached only when the PreToolUse hook did not pause the session: record the wait and have the model stop.
+      setWaitingFor(ctx, env.taskId, { tool_use_id: newId('mcp', 10), action_id: action_id ?? null, since: new Date().toISOString() });
+      return text('The owner was notified. Stop working now: end your turn with one short sentence saying what you are waiting for. The session will be resumed with the owner\'s input.');
     },
   );
 
@@ -224,14 +275,15 @@ export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }
 
   server.registerTool(
     'get_task_context',
-    { description: 'The current task (title, body, status, branch) plus the questions asked so far with their answers and any review notes.', inputSchema: {} },
+    { description: "The current task (title, body, status, branch) plus the questions asked so far with their answers, review notes, and the task's thread (your updates and actions, the owner's messages).", inputSchema: {} },
     async () => {
       if (!env.taskId) return fail('No task is attached to this session.');
       const t = findTask(ctx, env.taskId);
       if (!t) return fail(`Task ${env.taskId} not found.`);
       const questions = listQuestions(ctx, { taskId: t.id }).reverse().map((q) => ({ questions: q.questions.map((x) => x.question), answer: q.answer }));
       const notes = listEvents(ctx, t.id).filter((e) => e.type === 'task.changes_requested').map((e) => e.payload.note);
-      return text(JSON.stringify({ task: toPublicTask(t), questions, review_notes: notes }, null, 2));
+      const thread = listMessages(ctx, t.id).map((m) => ({ id: m.id, from: m.author, kind: m.kind, title: m.title || undefined, body: m.body || undefined, status: m.status ?? undefined, note: m.note ?? undefined, at: m.created_at }));
+      return text(JSON.stringify({ task: toPublicTask(t), questions, review_notes: notes, thread }, null, 2));
     },
   );
 

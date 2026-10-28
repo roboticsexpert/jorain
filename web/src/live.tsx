@@ -45,8 +45,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
 
   const loadInbox = useCallback(async () => {
     try {
-      const [qs, review] = await Promise.all([api.openQuestions(), api.tasks({ status: ['review'] })]);
-      setInboxCount(qs.length + review.length);
+      const [qs, review, msgs] = await Promise.all([api.openQuestions(), api.tasks({ status: ['review'] }), api.inboxMessages()]);
+      setInboxCount(qs.length + review.length + msgs.length);
     } catch {
       /* status strip already shows backend errors */
     }
@@ -68,7 +68,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     return subscribeEvents(
       (type, data) => {
         if (type === 'status') setStatus(data as Status);
-        if (type === 'task.updated' || type === 'question.created' || type === 'question.answered') refreshInbox();
+        if (type === 'task.updated' || type === 'question.created' || type === 'question.answered' || type === 'task.message') refreshInbox();
         for (const h of handlers.current) h(type, data);
       },
       (ok) => {

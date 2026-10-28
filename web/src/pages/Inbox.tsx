@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
-import type { Question, Task } from '../api/types';
+import type { Question, Task, TaskMessage } from '../api/types';
 import { QuestionForm } from '../components/QuestionForm';
+import { ActionItem } from '../components/Thread';
 import { Empty, ErrorBox, Markdown, Spinner } from '../components/ui';
 import { useLive, useReconnect, useSse } from '../live';
 import { errorMessage, fullDate, timeAgo } from '../lib/util';
@@ -11,13 +12,15 @@ export function InboxPage() {
   const { refreshInbox } = useLive();
   const [questions, setQuestions] = useState<Question[] | null>(null);
   const [review, setReview] = useState<Task[] | null>(null);
+  const [messages, setMessages] = useState<TaskMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [qs, ts] = await Promise.all([api.openQuestions(), api.tasks({ status: ['review'] })]);
+      const [qs, ts, ms] = await Promise.all([api.openQuestions(), api.tasks({ status: ['review'] }), api.inboxMessages()]);
       setQuestions(qs);
       setReview(ts.sort((a, b) => b.updated_at.localeCompare(a.updated_at)));
+      setMessages(ms);
       setError(null);
     } catch (e) {
       setError(errorMessage(e));
@@ -38,6 +41,20 @@ export function InboxPage() {
       const q = data as Question;
       setQuestions((qs) => qs?.filter((x) => x.id !== q.id) ?? qs);
     }
+    if (type === 'task.message') {
+      const m = data as TaskMessage;
+      const pending = (m.kind === 'action' && m.status === 'open') || (m.author === 'agent' && m.kind === 'update' && !m.read_at);
+      setMessages((ms) => {
+        if (!ms) return ms;
+        const rest = ms.filter((x) => x.id !== m.id);
+        return pending ? [m, ...rest] : rest;
+      });
+    }
+    if (type === 'task.updated') {
+      // Reading a task's updates elsewhere (drawer, MCP) clears them here.
+      const t = data as Task;
+      if (t.unread_updates === 0) setMessages((ms) => ms?.filter((x) => x.task_id !== t.id || x.kind !== 'update') ?? ms);
+    }
     if (type === 'task.updated') {
       const t = data as Task;
       setReview((ts) => {
@@ -48,7 +65,8 @@ export function InboxPage() {
     }
   });
 
-  const loading = (!questions || !review) && !error;
+  const loading = (!questions || !review || !messages) && !error;
+  const dropUpdates = (taskId: string) => setMessages((ms) => ms?.filter((x) => x.task_id !== taskId || x.kind !== 'update') ?? ms);
 
   return (
     <div className="page inbox-page">
@@ -85,6 +103,22 @@ export function InboxPage() {
               />
             </article>
           ))}
+        </section>
+      )}
+
+      {messages && (
+        <section className="inbox-section">
+          <h2>
+            📌 To-dos & updates <span className="count">{messages.length}</span>
+          </h2>
+          {messages.length === 0 && <Empty emoji="📭">No to-dos or new updates from Claude.</Empty>}
+          {messages.map((m) =>
+            m.kind === 'action' ? (
+              <ActionItem key={m.id} message={m} showTask onChanged={() => setMessages((ms) => ms?.filter((x) => x.id !== m.id) ?? ms)} />
+            ) : (
+              <UpdateCard key={m.id} message={m} onRead={() => dropUpdates(m.task_id)} />
+            ),
+          )}
         </section>
       )}
 
@@ -165,6 +199,80 @@ function ReviewCard({ task, onDone }: { task: Task; onDone: () => void }) {
           </button>
           <Link to={`/board?task=${task.id}`} className="btn-ghost">
             Open details
+          </Link>
+        </div>
+      )}
+    </article>
+  );
+}
+
+/** An update Claude shared while working: read it, reply in the thread, or open the task. */
+function UpdateCard({ message: m, onRead }: { message: TaskMessage; onRead: () => void }) {
+  const { toast, toastError, refreshInbox } = useLive();
+  const [replying, setReplying] = useState(false);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function run(fn: () => Promise<unknown>, msg?: string) {
+    setBusy(true);
+    try {
+      await fn();
+      if (msg) toast(msg);
+      onRead();
+      refreshInbox();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <article className="card inbox-card msg-update">
+      <header className="inbox-card-head">
+        <span className="msg-label small">📣 Update</span>
+        <Link to={`/board?task=${m.task_id}`} className="task-link">
+          {m.task_title}
+        </Link>
+        <span className="muted">· {m.project_slug}</span>
+        <span className="grow" />
+        <span className="muted" title={fullDate(m.created_at)}>
+          {timeAgo(m.created_at)}
+        </span>
+      </header>
+      <div className="msg-title">{m.title}</div>
+      {m.body && <Markdown source={m.body} />}
+      {replying ? (
+        <form
+          className="changes"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(async () => {
+              await api.sendMessage(m.task_id, text.trim());
+              await api.markMessagesRead(m.task_id);
+            }, 'Sent to Claude');
+          }}
+        >
+          <textarea autoFocus rows={3} placeholder="Your feedback for Claude…" value={text} onChange={(e) => setText(e.target.value)} />
+          <div className="row end">
+            <button type="button" className="btn-ghost" onClick={() => setReplying(false)}>
+              Never mind
+            </button>
+            <button type="submit" className="btn-primary" disabled={busy || !text.trim()}>
+              Send to Claude
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="row">
+          <button type="button" className="btn-primary" disabled={busy} onClick={() => setReplying(true)}>
+            ↩ Reply
+          </button>
+          <button type="button" disabled={busy} onClick={() => run(() => api.markMessagesRead(m.task_id))}>
+            ✓ Got it
+          </button>
+          <Link to={`/board?task=${m.task_id}`} className="btn-ghost">
+            Open task
           </Link>
         </div>
       )}

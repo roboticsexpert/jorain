@@ -5,6 +5,7 @@ import { streamSSE } from 'hono/streaming';
 import type { Ctx } from '../core/context.ts';
 import { bus, listEvents, type LiveMessage } from '../core/events.ts';
 import * as knowledge from '../core/knowledge.ts';
+import { getMessage, inboxMessages, listMessages, markRead } from '../core/messages.ts';
 import { hasFts5 } from '../db/client.ts';
 import { createMilestone, deleteMilestone, getMilestone, listMilestones, updateMilestone } from '../core/milestones.ts';
 import { createPlanTask } from '../core/planning.ts';
@@ -60,6 +61,7 @@ function taskDetail(ctx: Ctx, id: string) {
     runs: listRuns(ctx, id),
     commits,
     events: listEvents(ctx, id),
+    messages: listMessages(ctx, id),
   };
 }
 
@@ -162,6 +164,29 @@ export function createApp(ctx: Ctx, orch: Orchestrator): Hono {
     const project = getProject(ctx, t.project_slug);
     const diff = project.repo_path && t.branch && t.base_sha ? git.diffBetween(project.repo_path, t.base_sha, t.branch) : '';
     return c.text(diff);
+  });
+
+  // Task thread (docs/07-task-thread.md)
+  api.get('/tasks/:id/messages', (c) => {
+    getTask(ctx, c.req.param('id'));
+    return c.json(listMessages(ctx, c.req.param('id')));
+  });
+  api.post('/tasks/:id/messages', async (c) => {
+    const { body: text } = await body(c);
+    if (typeof text !== 'string' || !text.trim()) throw badRequest('body is required');
+    const r = orch.message(c.req.param('id'), text);
+    return c.json({ message: r.message, task: toPublicTask(r.task) }, 201);
+  });
+  api.post('/tasks/:id/messages/read', (c) => c.json({ marked: markRead(ctx, c.req.param('id')) }));
+  api.get('/messages', (c) => c.json(inboxMessages(ctx)));
+  api.post('/messages/:id/resolve', async (c) => {
+    const id = c.req.param('id');
+    getMessage(ctx, id);
+    const { status: s, note } = await body(c);
+    if (s !== 'done' && s !== 'declined') throw badRequest('status must be done or declined');
+    if (note !== undefined && note !== null && typeof note !== 'string') throw badRequest('note must be a string');
+    const r = orch.resolveAction(id, s, note);
+    return c.json({ message: r.message, task: toPublicTask(r.task) });
   });
 
   // Questions

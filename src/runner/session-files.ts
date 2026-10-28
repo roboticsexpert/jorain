@@ -7,7 +7,7 @@ import { selfEntry, shellQuote } from './entry.ts';
 
 /**
  * Per-run temp files handed to `claude`: a merged MCP config (global + project + the brain server)
- * and a settings file registering the brain PreToolUse hook.
+ * and a settings file registering the brain PreToolUse and PostToolUse hooks.
  */
 export function writeSessionFiles(ctx: Ctx, taskId: string, projectSlug: string): { dir: string; mcpConfig: string; settings: string } {
   const dir = mkdtempSync(path.join(os.tmpdir(), `brain-${taskId}-`));
@@ -24,15 +24,15 @@ export function writeSessionFiles(ctx: Ctx, taskId: string, projectSlug: string)
       },
     },
   };
-  const hook = selfEntry('hooks/pretooluse');
+  const command = (rel: string) => {
+    const e = selfEntry(rel);
+    return [e.command, ...e.args].map(shellQuote).join(' ');
+  };
   const settings = {
     hooks: {
-      PreToolUse: [
-        {
-          matcher: 'mcp__brain__ask_human|AskUserQuestion|Bash',
-          hooks: [{ type: 'command', command: [hook.command, ...hook.args].map(shellQuote).join(' '), timeout: 30 }],
-        },
-      ],
+      PreToolUse: [{ matcher: 'mcp__brain__ask_human|mcp__brain__wait_for_owner|AskUserQuestion|Bash', hooks: [{ type: 'command', command: command('hooks/pretooluse'), timeout: 30 }] }],
+      // Every tool: delivers the owner's messages to the running session.
+      PostToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: command('hooks/posttooluse'), timeout: 30 }] }],
     },
   };
   const mcpConfig = path.join(dir, 'mcp.json');

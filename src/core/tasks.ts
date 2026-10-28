@@ -3,7 +3,7 @@ import type { Ctx } from './context.ts';
 import { publish, recordEvent } from './events.ts';
 import { findMilestone, resolveMilestone } from './milestones.ts';
 import { getProject } from './projects.ts';
-import { badRequest, BrainError, conflict, notFound, TASK_STATUSES, type Priority, type Task, type TaskKind, type TaskStatus } from './types.ts';
+import { badRequest, BrainError, conflict, notFound, TASK_STATUSES, type Priority, type Task, type TaskKind, type TaskStatus, type WaitFor } from './types.ts';
 
 /**
  * Task state machine. `inbox → todo → in_progress → waiting_for_human → in_progress → review → done`,
@@ -48,7 +48,9 @@ const UNMET_DEPS = `FROM task_deps d JOIN tasks u ON u.id = d.depends_on WHERE d
 
 const SELECT = `SELECT t.*, (SELECT COUNT(*) FROM questions q WHERE q.task_id = t.id) AS question_count,
   (SELECT group_concat(d.depends_on) FROM task_deps d WHERE d.task_id = t.id) AS deps_csv,
-  (SELECT group_concat(d.depends_on) ${UNMET_DEPS}) AS waiting_csv
+  (SELECT group_concat(d.depends_on) ${UNMET_DEPS}) AS waiting_csv,
+  (SELECT COUNT(*) FROM task_messages m WHERE m.task_id = t.id AND m.kind = 'action' AND m.status = 'open') AS open_actions,
+  (SELECT COUNT(*) FROM task_messages m WHERE m.task_id = t.id AND m.author = 'agent' AND m.kind = 'update' AND m.read_at IS NULL) AS unread_updates
   FROM tasks t`;
 
 /** Internal row: the public Task plus git bookkeeping. */
@@ -57,13 +59,13 @@ export interface TaskRow extends Task {
   base_sha: string | null;
 }
 
-type RawRow = Omit<TaskRow, 'depends_on' | 'waiting_on'> & { deps_csv: string | null; waiting_csv: string | null };
+type RawRow = Omit<TaskRow, 'depends_on' | 'waiting_on' | 'waiting_for'> & { deps_csv: string | null; waiting_csv: string | null; waiting_for: string | null };
 
 function hydrate(r: RawRow | undefined): TaskRow | undefined {
   if (!r) return undefined;
-  const { deps_csv, waiting_csv, ...t } = r;
+  const { deps_csv, waiting_csv, waiting_for, ...t } = r;
   const list = (csv: string | null) => (csv ? csv.split(',').sort() : []);
-  return { ...t, depends_on: list(deps_csv), waiting_on: list(waiting_csv) };
+  return { ...t, depends_on: list(deps_csv), waiting_on: list(waiting_csv), waiting_for: waiting_for ? (JSON.parse(waiting_for) as WaitFor) : null };
 }
 
 export function toPublicTask(t: TaskRow): Task {
@@ -230,6 +232,12 @@ export function setTaskFields(ctx: Ctx, id: string, fields: Partial<Pick<TaskRow
       .prepare(`UPDATE tasks SET ${keys.map((k) => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
       .run(...keys.map((k) => fields[k] ?? null), now(), id);
   }
+  return emit(ctx, id);
+}
+
+/** Records (or clears) what the agent is waiting for while the task is waiting_for_human via wait_for_owner. */
+export function setWaitingFor(ctx: Ctx, id: string, w: WaitFor | null): TaskRow {
+  ctx.db.prepare('UPDATE tasks SET waiting_for = ?, updated_at = ? WHERE id = ?').run(w ? JSON.stringify(w) : null, now(), id);
   return emit(ctx, id);
 }
 

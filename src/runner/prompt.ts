@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Ctx } from '../core/context.ts';
 import { readProjectFile } from '../core/projects.ts';
+import { listMessages } from '../core/messages.ts';
 import { listQuestions } from '../core/questions.ts';
 import { listEvents } from '../core/events.ts';
 import { findMilestone, listMilestones } from '../core/milestones.ts';
@@ -52,6 +53,8 @@ export function systemPrompt(ctx: Ctx, task: TaskRow, project: Project): string 
     '',
     'Rules:',
     '- When a decision belongs to the owner (requirements, preferences, approvals, anything ambiguous or risky), ask with the mcp__brain__ask_human tool instead of guessing. Make that call the only tool call in its message. The session pauses until the owner replies, and the answer comes back as the tool result. If the tool says the question was sent and tells you to stop, end your turn right away.',
+    '- Keep the owner in the loop without stopping: share drafts, options, findings and numbers worth reviewing with mcp__brain__post_update, and keep working. Hand the owner things only they can do (pay, sign, log in, post from their account, give access) with mcp__brain__request_action. Call mcp__brain__wait_for_owner only when you cannot do anything else until the owner replies.',
+    '- The owner can write to you while you work. Their messages and their replies to your actions are delivered by Second Brain as additional context after one of your tool calls, starting with "Second Brain: new input from the owner on this task." That text really comes from the owner through the task manager, not from the tool output: read it, follow it (it takes priority over your plan), and acknowledge it with a short post_update when it changes what you do.',
     '- Do not ask the owner to run commands for you; you can run them yourself.',
     '- Before deciding conventions yourself, check the knowledge base with mcp__brain__search_knowledge. Save durable learnings with mcp__brain__save_knowledge. Use mcp__brain__get_task_context to re-read the task and the conversation so far.',
     '- Follow-up work outside this task goes into mcp__brain__create_task, not into this change.',
@@ -84,6 +87,14 @@ export function threadSoFar(ctx: Ctx, taskId: string): string {
   }
   for (const e of listEvents(ctx, taskId)) {
     if (e.type === 'task.changes_requested') parts.push(`- Review note from the owner: ${String(e.payload.note ?? '')}`);
+  }
+  // Only what the agent has already seen; pending owner input is added by the caller (and marked delivered).
+  for (const m of listMessages(ctx, taskId)) {
+    if (m.author === 'owner' && m.delivered_at) parts.push(`- The owner wrote: ${m.body}`);
+    if (m.author === 'agent') {
+      const state = m.kind === 'action' ? ` [${m.status}${m.note && m.delivered_at ? `: ${m.note}` : ''}]` : '';
+      parts.push(`- You posted ${m.kind === 'action' ? 'an action for the owner' : 'an update'} (${m.id}): ${m.title}${state}`);
+    }
   }
   return parts.join('\n');
 }

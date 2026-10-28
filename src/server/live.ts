@@ -2,6 +2,7 @@ import type { Ctx } from '../core/context.ts';
 import { eventsAfter, lastEventId, publish, publishedLocally } from '../core/events.ts';
 import { findMilestone } from '../core/milestones.ts';
 import { findProject } from '../core/projects.ts';
+import { findMessage } from '../core/messages.ts';
 import { findQuestion } from '../core/questions.ts';
 import { findTask, toPublicTask } from '../core/tasks.ts';
 import { getRun } from '../core/runs.ts';
@@ -23,6 +24,9 @@ export function startEventRelay(ctx: Ctx, intervalMs = 1500): () => void {
         else if (e.type === 'question.created' || e.type === 'question.answered') {
           const q = findQuestion(ctx, p.question_id);
           if (q) publish(e.type, q);
+        } else if (e.type === 'message.created' || e.type === 'message.updated') {
+          const m = findMessage(ctx, p.message_id);
+          if (m) publish('task.message', m);
         } else if (e.type === 'run.started' || e.type === 'run.ended') publish(e.type, getRun(ctx, p.run_id));
         else if (e.type === 'milestone.created' || e.type === 'milestone.edited') {
           const m = findMilestone(ctx, p.id);

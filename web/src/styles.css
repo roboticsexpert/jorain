@@ -1721,3 +1721,52 @@ button:active:not(:disabled) {
     grid-column: auto;
   }
 }
+
+/* ---------- task thread ---------- */
+.thread .msg {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.msg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.msg-label {
+  font-weight: 600;
+}
+.msg-title {
+  font-weight: 600;
+}
+.msg-update {
+  border-left: 3px solid var(--accent);
+}
+.msg-action {
+  border-left: 3px solid var(--warn);
+}
+.msg-action.msg-resolved {
+  border-left-color: var(--border);
+  background: var(--surface-2);
+}
+.msg-owner {
+  margin-left: 15%;
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+.msg-note {
+  color: var(--muted);
+}
+.msg textarea {
+  width: 100%;
+}
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.composer textarea {
+  width: 100%;
+}

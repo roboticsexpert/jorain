@@ -1,7 +1,7 @@
 // In-browser fake backend for VITE_MOCK=1. Implements every endpoint of docs/05-api-contract.md
 // over the in-memory seed in ./data.ts, plus a fake SSE stream driven by timers.
 import type { RawResponse, SseHandler } from '../api/client';
-import type { Answer, Milestone, Note, NoteScope, Portfolio, Project, ProjectSummary, Question, Run, Schedule, SseEvents, SseType, Status, Task, TaskStatus } from '../api/types';
+import type { Answer, Milestone, Note, NoteScope, Portfolio, Project, ProjectSummary, Question, Run, Schedule, SseEvents, SseType, Status, Task, TaskMessage, TaskStatus } from '../api/types';
 import { parseFrontmatter, slugify } from '../lib/frontmatter';
 import * as db from './data';
 
@@ -165,9 +165,25 @@ function deliver(t: Task, pushNow: boolean) {
   }
 }
 
+/** A message with its task's title and project filled in. */
+function messageView(m: TaskMessage): TaskMessage {
+  const t = db.tasks.find((x) => x.id === m.task_id);
+  return { ...m, task_title: t?.title ?? '', project_slug: t?.project_slug ?? '' };
+}
+
+/** Recomputes a task's thread counters (the server does this in SQL). */
+function threadCounts(t: Task): Pick<Task, 'open_actions' | 'unread_updates'> {
+  const mine = db.messages.filter((m) => m.task_id === t.id);
+  return {
+    open_actions: mine.filter((m) => m.kind === 'action' && m.status === 'open').length,
+    unread_updates: mine.filter((m) => m.author === 'agent' && m.kind === 'update' && !m.read_at).length,
+  };
+}
+for (const t of db.tasks) Object.assign(t, threadCounts(t));
+
 function touch(t: Task, patch: Partial<Task>) {
   const before = t.milestone_id;
-  Object.assign(t, patch, { updated_at: nowIso() });
+  Object.assign(t, patch, threadCounts(t), { updated_at: nowIso() });
   emit('task.updated', clone(t));
   for (const id of new Set([before, t.milestone_id])) {
     const m = id && db.milestones.find((x) => x.id === id);
@@ -369,6 +385,9 @@ function newTask(proj: Project, title: string, status: TaskStatus): Task {
     worktree: null,
     verify_status: null,
     schedule_id: null,
+    waiting_for: null,
+    open_actions: 0,
+    unread_updates: 0,
     created_at: nowIso(),
     updated_at: nowIso(),
   };
@@ -708,6 +727,7 @@ function route(method: string, url: URL, body: Body): RawResponse {
         runs: db.runs.filter((r) => r.task_id === t.id).sort((a, b) => a.started_at.localeCompare(b.started_at)),
         commits: db.commits[t.id] ?? [],
         events: db.events.filter((e) => e.task_id === t.id),
+        messages: db.messages.filter((x) => x.task_id === t.id).map(messageView),
       });
     }
     if (method === 'PATCH') {
@@ -735,6 +755,70 @@ function route(method: string, url: URL, body: Body): RawResponse {
       touch(t, patch);
       return json(200, t);
     }
+  }
+
+  // Task thread
+  if ((m = /^\/api\/tasks\/([^/]+)\/messages(\/read)?$/.exec(p))) {
+    const t = findTask(m[1]);
+    if (m[2] && method === 'POST') {
+      let marked = 0;
+      for (const x of db.messages) if (x.task_id === t.id && x.author === 'agent' && !x.read_at) (x.read_at = nowIso()), marked++;
+      touch(t, {});
+      return json(200, { marked });
+    }
+    if (!m[2] && method === 'GET') return json(200, db.messages.filter((x) => x.task_id === t.id).map(messageView));
+    if (!m[2] && method === 'POST') {
+      const text = String(body.body ?? '').trim();
+      if (!text) fail(400, 'bad_request', 'body is required');
+      if (t.status === 'done') fail(409, 'conflict', `task ${t.id} is done; create a new task instead`);
+      const msg: TaskMessage = { id: db.newId('m'), task_id: t.id, task_title: t.title, project_slug: t.project_slug, author: 'owner', kind: 'message', title: '', body: text, status: null, note: null, created_at: nowIso(), read_at: null, delivered_at: null, resolved_at: null };
+      db.messages.push(msg);
+      emit('task.message', messageView(msg));
+      logEvent(t.id, 'message.created', { message_id: msg.id, author: 'owner', kind: 'message' });
+      if (t.status === 'in_progress') {
+        // Pretend the agent picks it up at its next tool call and acknowledges it.
+        setTimeout(() => {
+          msg.delivered_at = nowIso();
+          emit('task.message', messageView(msg));
+          const ack: TaskMessage = { ...msg, id: db.newId('m'), author: 'agent', kind: 'update', title: 'Got it', body: `Adjusting the plan: “${text.slice(0, 80)}”`, delivered_at: nowIso(), created_at: nowIso() };
+          db.messages.push(ack);
+          emit('task.message', messageView(ack));
+          touch(t, {});
+        }, 3000);
+      } else if (t.status === 'review' || (t.status === 'waiting_for_human' && t.waiting_for)) {
+        msg.delivered_at = nowIso();
+        touch(t, { status: 'in_progress', waiting_for: null });
+        startRun(t, 'resume', 'end_turn', `Owner: ${text}`);
+      }
+      touch(t, {});
+      return json(201, { message: messageView(msg), task: t });
+    }
+  }
+  if (p === '/api/messages' && method === 'GET') {
+    return json(
+      200,
+      db.messages
+        .filter((x) => (x.kind === 'action' && x.status === 'open') || (x.author === 'agent' && x.kind === 'update' && !x.read_at))
+        .map(messageView)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    );
+  }
+  if ((m = /^\/api\/messages\/([^/]+)\/resolve$/.exec(p)) && method === 'POST') {
+    const msg = db.messages.find((x) => x.id === m![1]) ?? fail(404, 'not_found', `message ${m[1]} not found`);
+    if (msg.kind !== 'action') fail(400, 'bad_request', `message ${msg.id} is not an action`);
+    if (msg.status !== 'open') fail(409, 'conflict', `action ${msg.id} is already ${msg.status}`);
+    const status = body.status;
+    if (status !== 'done' && status !== 'declined') fail(400, 'bad_request', 'status must be done or declined');
+    Object.assign(msg, { status, note: typeof body.note === 'string' && body.note.trim() ? body.note.trim() : null, resolved_at: nowIso(), read_at: msg.read_at ?? nowIso(), delivered_at: null });
+    emit('task.message', messageView(msg));
+    logEvent(msg.task_id, 'message.updated', { message_id: msg.id });
+    const t = findTask(msg.task_id);
+    if (t.status === 'waiting_for_human' && t.waiting_for) {
+      msg.delivered_at = nowIso();
+      touch(t, { status: 'in_progress', waiting_for: null });
+      startRun(t, 'resume', 'end_turn', `Action ${msg.id}: ${status}`);
+    } else touch(t, {});
+    return json(200, { message: messageView(msg), task: t });
   }
 
   // Questions

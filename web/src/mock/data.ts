@@ -1,5 +1,5 @@
 // Seed data for VITE_MOCK=1. Everything lives in memory and resets on reload.
-import type { BrainEvent, Commit, Milestone, Project, Question, Run, Schedule, Task } from '../api/types';
+import type { BrainEvent, Commit, Milestone, Project, Question, Run, Schedule, Task, TaskMessage } from '../api/types';
 
 const now = Date.now();
 export const ago = (min: number) => new Date(now - min * 60_000).toISOString();
@@ -92,6 +92,9 @@ function task(p: Partial<Task> & Pick<Task, 'id' | 'project_slug' | 'title'>, mi
     worktree: null,
     verify_status: null,
     schedule_id: null,
+    waiting_for: null,
+    open_actions: 0,
+    unread_updates: 0,
     created_at: ago(minAgo),
     updated_at: ago(Math.max(1, minAgo - 30)),
     ...p,
@@ -143,6 +146,17 @@ export const tasks: Task[] = [
       session_id: '5b0c7a7e-2f1d-4f1e-9a1b-3a7d2c1e0f11',
     },
     90,
+  ),
+  task(
+    {
+      id: 't_adtg1z',
+      project_slug: 'website',
+      title: 'Advertise the website on Telegram channels',
+      body: 'Find 3–5 Telegram channels our readers follow, write the ad, and get it posted. Budget: 150 USDT.',
+      status: 'in_progress',
+      session_id: '9d1e2c3b-4a5f-4e6d-8c7b-6a5f4e3d2c1b',
+    },
+    45,
   ),
   task(
     {
@@ -660,3 +674,56 @@ export const mcp: Record<string, { project: Record<string, unknown> }> = {
 export const globalMcp: Record<string, unknown> = {
   mcpServers: { fetch: { command: 'uvx', args: ['mcp-server-fetch'] } },
 };
+
+const msg = (p: Partial<TaskMessage> & Pick<TaskMessage, 'id' | 'task_id' | 'author' | 'kind'>, minAgo: number): TaskMessage => ({
+  task_title: '',
+  project_slug: '',
+  title: '',
+  body: '',
+  status: null,
+  note: null,
+  created_at: ago(minAgo),
+  read_at: null,
+  delivered_at: ago(minAgo),
+  resolved_at: null,
+  ...p,
+});
+
+export const messages: TaskMessage[] = [
+  msg(
+    {
+      id: 'm_ad001',
+      task_id: 't_adtg1z',
+      author: 'agent',
+      kind: 'update',
+      title: 'Candidate channels',
+      body: '| Channel | Members | Price / post |\n|---|---|---|\n| @webdev_daily | 48k | 60 USDT |\n| @frontend_tips | 21k | 35 USDT |\n| @indiehackers_fa | 12k | 20 USDT |\n\nI am leaning towards the first two.',
+      read_at: ago(30),
+    },
+    38,
+  ),
+  msg({ id: 'm_ad002', task_id: 't_adtg1z', author: 'owner', kind: 'message', body: 'Skip @indiehackers_fa, their audience is not ours.' }, 32),
+  msg(
+    {
+      id: 'm_ad003',
+      task_id: 't_adtg1z',
+      author: 'agent',
+      kind: 'update',
+      title: 'Ad drafts (3)',
+      body: '1. **Build faster sites** — our weekly guide to performance, free.\n2. **Your site is slow. Here is why.** A 5‑minute read every Friday.\n3. **Ship less JavaScript** — practical tips from real projects.',
+    },
+    12,
+  ),
+  msg(
+    {
+      id: 'm_ad004',
+      task_id: 't_adtg1z',
+      author: 'agent',
+      kind: 'action',
+      title: 'Pay @webdev_daily admin 60 USDT',
+      body: 'The admin (@wd_admin) only accepts USDT (TRC20) to `TXy…9k`. Mark this done with the transaction id and I will book the slot.',
+      status: 'open',
+    },
+    6,
+  ),
+];

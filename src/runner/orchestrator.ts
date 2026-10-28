@@ -4,11 +4,12 @@ import { rmSync } from 'node:fs';
 import type { Ctx } from '../core/context.ts';
 import { publish, recordEvent } from '../core/events.ts';
 import { getProject } from '../core/projects.ts';
+import { addOwnerMessage, pendingForAgent, resolveAction, takePending, waitSatisfied } from '../core/messages.ts';
 import { answerQuestion, createQuestion, getQuestion, isRecordedByTool, listQuestions } from '../core/questions.ts';
-import { ASK_TOOLS } from '../hooks/pretooluse.ts';
+import { ASK_TOOLS, WAIT_TOOL } from '../hooks/pretooluse.ts';
 import { createRun, endRun, openRuns, setRunPid } from '../core/runs.ts';
-import { getTask, listTasks, setTaskFields, STARTABLE, transition, type TaskRow } from '../core/tasks.ts';
-import { BrainError, conflict, type Answer, type Project, type Question, type Run } from '../core/types.ts';
+import { getTask, listTasks, setTaskFields, setWaitingFor, STARTABLE, transition, type TaskRow } from '../core/tasks.ts';
+import { BrainError, conflict, type ActionStatus, type Answer, type Project, type Question, type Run, type TaskMessage } from '../core/types.ts';
 import { buildArgs, spawnClaude, type ClaudeExit, type RunningClaude } from './claude.ts';
 import { agentEnv } from './env.ts';
 import * as git from './git.ts';
@@ -74,9 +75,13 @@ export class Orchestrator {
     const note = syncNote(this.trySync(taskId, true));
     const sessionId = randomUUID();
     setTaskFields(this.ctx, task.id, { session_id: sessionId, result_summary: null, verify_status: null });
+    setWaitingFor(this.ctx, task.id, null);
     this.fixAttempts.delete(taskId);
     const t = transition(this.ctx, task.id, 'in_progress', { action: 'start' });
-    this.launch(t, project, { kind: 'start', prompt: initialPrompt(this.ctx, t, project, note), resume: false });
+    let prompt = initialPrompt(this.ctx, t, project, note);
+    const pending = takePending(this.ctx, t.id);
+    if (pending) prompt += `\n\n## New from the owner\n\n${pending}`;
+    this.launch(t, project, { kind: 'start', prompt, resume: false });
     return getTask(this.ctx, task.id);
   }
 
@@ -92,6 +97,12 @@ export class Orchestrator {
     // A session paused on a question only gets fast-forwards; one coming back from review may get the base merged in.
     const note = syncNote(this.trySync(taskId, prompt !== undefined));
     if (note && prompt !== undefined) prompt = `${note}\n\n${prompt}`;
+    // With a prompt, pending owner input rides along; without one, the PostToolUse hook delivers it after the paused tool call.
+    if (prompt !== undefined) {
+      const pending = takePending(this.ctx, taskId);
+      if (pending) prompt += `\n\n${pending}`;
+    }
+    setWaitingFor(this.ctx, taskId, null);
     this.fixAttempts.delete(taskId);
     const t = transition(this.ctx, task.id, 'in_progress', { action });
     this.launch(t, project, { kind: 'resume', prompt, resume: true });
@@ -110,6 +121,56 @@ export class Orchestrator {
       ? `The owner answered your question:\n${last.answer.map((a) => `- ${a.question}\n  → ${a.answer}`).join('\n')}\n\nContinue the task.`
       : undefined;
     return this.resume(taskId, prompt, 'answer');
+  }
+
+  /**
+   * Resumes a task parked on wait_for_owner. A hook-paused wait resumes with no prompt (the tool call
+   * re-runs, the hook allows it and the tool returns the owner's input); a wait the tool recorded itself
+   * resumes with the input as the prompt.
+   */
+  resumeAfterWait(taskId: string): TaskRow {
+    const task = getTask(this.ctx, taskId);
+    if (!task.waiting_for) throw conflict(`task ${taskId} is not waiting for the owner`);
+    if (!waitSatisfied(this.ctx, task)) throw conflict(`task ${taskId} still waits for ${task.waiting_for.action_id ?? 'a message from the owner'}`);
+    const prompt = task.waiting_for.tool_use_id.startsWith('mcp_') ? 'You were waiting for the owner. Continue the task with their input below.' : undefined;
+    return this.resume(taskId, prompt, 'owner_input');
+  }
+
+  /**
+   * An owner message on the task's thread. Running: the PostToolUse hook hands it over at the agent's
+   * next tool call (or the run continues with it if it ends first). Waiting on wait_for_owner: resumes.
+   * In review: resumes the session with the message, like a review note. Otherwise it waits for the next
+   * start or resume.
+   */
+  message(taskId: string, body: string): { message: TaskMessage; task: TaskRow } {
+    const message = addOwnerMessage(this.ctx, taskId, body);
+    const task = getTask(this.ctx, taskId);
+    if (task.status === 'review') {
+      this.resume(
+        taskId,
+        'The owner looked at your work and wrote to you. If they ask for changes, make them and commit them on the same branch; if they ask a question, answer it. End with a short summary.',
+        'owner_message',
+      );
+    } else this.wakeIfWaiting(task);
+    return { message, task: getTask(this.ctx, taskId) };
+  }
+
+  /** The owner resolves one of the agent's actions; a task waiting for it resumes. */
+  resolveAction(id: string, status: ActionStatus, note?: string | null): { message: TaskMessage; task: TaskRow } {
+    const message = resolveAction(this.ctx, id, status, note);
+    this.wakeIfWaiting(getTask(this.ctx, message.task_id));
+    return { message, task: getTask(this.ctx, message.task_id) };
+  }
+
+  private wakeIfWaiting(task: TaskRow): void {
+    if (!waitSatisfied(this.ctx, task)) return;
+    try {
+      this.resumeAfterWait(task.id);
+    } catch (err) {
+      // e.g. the project is at capacity: the scheduler retries on its next tick.
+      if (!(err instanceof BrainError)) throw err;
+      console.warn(`[brain] owner input stored for ${task.id}, resume deferred: ${err.message}`);
+    }
   }
 
   requestChanges(taskId: string, note: string): TaskRow {
@@ -146,7 +207,7 @@ export class Orchestrator {
     const q = answerQuestion(this.ctx, questionId, answers);
     const task = getTask(this.ctx, q.task_id);
     const open = listQuestions(this.ctx, { taskId: task.id, open: true });
-    if (task.status === 'waiting_for_human' && !open.length) {
+    if (task.status === 'waiting_for_human' && !open.length && !task.waiting_for) {
       try {
         this.resumeAfterAnswer(task.id);
       } catch (err) {
@@ -174,6 +235,7 @@ export class Orchestrator {
       }
     }
     this.fixAttempts.delete(taskId);
+    if (task.waiting_for) setWaitingFor(this.ctx, taskId, null);
     if (task.status === 'blocked') return task;
     return transition(this.ctx, taskId, 'blocked', { action: 'cancel' });
   }
@@ -256,6 +318,13 @@ export class Orchestrator {
         createQuestion(this.ctx, taskId, o.deferred.id, o.deferred.input);
         transition(this.ctx, taskId, 'waiting_for_human', { ...info, via: 'hook_defer' });
       }
+    } else if (o.deferred && o.deferred.name === WAIT_TOOL) {
+      const input = (o.deferred.input ?? {}) as { action_id?: unknown; reason?: unknown };
+      const actionId = typeof input.action_id === 'string' ? input.action_id : null;
+      setWaitingFor(this.ctx, taskId, { tool_use_id: o.deferred.id, action_id: actionId, since: new Date().toISOString() });
+      transition(this.ctx, taskId, 'waiting_for_human', { ...info, via: 'wait_for_owner', action_id: actionId, reason: typeof input.reason === 'string' ? input.reason : undefined });
+      // The owner may have answered while the run was shutting down.
+      return () => this.wakeIfWaiting(getTask(this.ctx, taskId));
     } else if (o.deferred) {
       this.fail(taskId, `The session paused on an unexpected tool (${o.deferred.name}).`, info);
     } else if (o.ok && exit.exitCode === 0) {
@@ -264,6 +333,15 @@ export class Orchestrator {
         if (listQuestions(this.ctx, { taskId }).length > this.ctx.cfg.maxQuestions) this.tooManyQuestions(taskId, info);
         else transition(this.ctx, taskId, 'waiting_for_human', { ...info, via: 'ask_human_tool' });
         return;
+      }
+      if (task.waiting_for) {
+        transition(this.ctx, taskId, 'waiting_for_human', { ...info, via: 'wait_for_owner_tool', action_id: task.waiting_for.action_id });
+        return () => this.wakeIfWaiting(getTask(this.ctx, taskId));
+      }
+      if (pendingForAgent(this.ctx, taskId).length) {
+        // The owner wrote after the agent's last tool call: hand it over before the task goes to review.
+        recordEvent(this.ctx, taskId, 'task.owner_input_continue', { run_id: run.id });
+        return () => this.continueSession(taskId, project, takePending(this.ctx, taskId) ?? 'Continue the task.', false);
       }
       return this.verifyThenReview(taskId, project, cwd, o.resultText ?? '(no summary)', info);
     } else {
@@ -308,11 +386,11 @@ export class Orchestrator {
     transition(this.ctx, taskId, 'review', info);
   }
 
-  /** Another run of the same session while the task stays in progress (failed checks). */
-  private continueSession(taskId: string, project: Project, prompt: string): void {
+  /** Another run of the same session while the task stays in progress (failed checks, late owner input). */
+  private continueSession(taskId: string, project: Project, prompt: string, verifyFix = true): void {
     const t = getTask(this.ctx, taskId);
     if (t.status !== 'in_progress') return;
-    recordEvent(this.ctx, taskId, 'task.verify_fix', { attempt: this.fixAttempts.get(taskId) ?? 1 });
+    if (verifyFix) recordEvent(this.ctx, taskId, 'task.verify_fix', { attempt: this.fixAttempts.get(taskId) ?? 1 });
     this.launch(t, project, { kind: 'resume', prompt, resume: true });
   }
 

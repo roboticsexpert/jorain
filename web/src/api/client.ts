@@ -1,4 +1,5 @@
 import type {
+  ActionStatus,
   Answer,
   McpConfig,
   Milestone,
@@ -24,6 +25,7 @@ import type {
   Status,
   Task,
   TaskDetail,
+  TaskMessage,
   TaskPatch,
   TaskStatus,
 } from './types';
@@ -133,6 +135,13 @@ export const api = {
   cancelTask: (id: string) => request<Task>('POST', `/api/tasks/${id}/cancel`),
   syncTask: (id: string) => request<{ result: SyncResult; task: Task }>('POST', `/api/tasks/${id}/sync`),
   taskDiff: (id: string) => request<string>('GET', `/api/tasks/${id}/diff`),
+
+  taskMessages: (id: string) => request<TaskMessage[]>('GET', `/api/tasks/${id}/messages`),
+  sendMessage: (id: string, body: string) => request<{ message: TaskMessage; task: Task }>('POST', `/api/tasks/${id}/messages`, { body }),
+  markMessagesRead: (id: string) => request<{ marked: number }>('POST', `/api/tasks/${id}/messages/read`),
+  inboxMessages: () => request<TaskMessage[]>('GET', '/api/messages'),
+  resolveAction: (id: string, status: Exclude<ActionStatus, 'open'>, note?: string) =>
+    request<{ message: TaskMessage; task: Task }>('POST', `/api/messages/${id}/resolve`, { status, note }),
 
   openQuestions: () => request<Question[]>('GET', '/api/questions?open=true'),
   answerQuestion: (id: string, answers: Answer[]) =>

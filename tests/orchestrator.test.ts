@@ -2,6 +2,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { listEvents } from '../src/core/events.ts';
+import { listMessages, pendingForAgent, postAgentMessage } from '../src/core/messages.ts';
 import { createProject } from '../src/core/projects.ts';
 import { listQuestions } from '../src/core/questions.ts';
 import { listRuns, readRunLog } from '../src/core/runs.ts';
@@ -128,5 +130,67 @@ describe('orchestrator with a fake claude', { timeout: 20_000 }, () => {
     orch.recover();
     expect(getTask(ctx, t.id).status).toBe('failed');
     expect(listRuns(ctx, t.id)[0].stop_reason).toBe('interrupted');
+  });
+});
+
+describe('task thread with a fake claude', { timeout: 20_000 }, () => {
+  it('wait_for_owner: defer → waiting → owner resolves the action → resume → the agent gets the note', async () => {
+    const { ctx, repo, orch } = setup();
+    const t = createTask(ctx, { project_slug: 'selftest', title: 'WAIT for the payment receipt' });
+    const action = postAgentMessage(ctx, t.id, { kind: 'action', title: 'Pay the admin 40 USDT' });
+    orch.start(t.id);
+    await orch.wait(t.id);
+    const waiting = getTask(ctx, t.id);
+    expect(waiting.status).toBe('waiting_for_human');
+    expect(waiting.waiting_for).toMatchObject({ action_id: null });
+    expect(waiting.question_count).toBe(0);
+
+    const r = orch.resolveAction(action.id, 'done', 'paid, tx 0xabc');
+    expect(r.task.status).toBe('in_progress');
+    await orch.wait(t.id);
+    const after = getTask(ctx, t.id);
+    expect(after.status).toBe('review');
+    expect(after.waiting_for).toBeNull();
+    expect(gitOut(repo, 'show', `${after.branch}:owner.txt`)).toContain('marked done by the owner: paid, tx 0xabc');
+    expect(listMessages(ctx, t.id).find((m) => m.id === action.id)?.delivered_at).toBeTruthy();
+    expect(listRuns(ctx, t.id).map((x) => [x.kind, x.stop_reason])).toEqual([
+      ['start', 'tool_deferred'],
+      ['resume', 'end_turn'],
+    ]);
+  });
+
+  it('a message to a task in review resumes the session with it', async () => {
+    const { ctx, orch } = setup();
+    const t = createTask(ctx, { project_slug: 'selftest', title: 'plain change' });
+    orch.start(t.id);
+    await orch.wait(t.id);
+    const r = orch.message(t.id, 'Looks good, but add one more line');
+    expect(r.task.status).toBe('in_progress');
+    await orch.wait(t.id);
+    expect(getTask(ctx, t.id).status).toBe('review');
+    expect(listRuns(ctx, t.id)).toHaveLength(2);
+    expect(listMessages(ctx, t.id)[0].delivered_at).toBeTruthy();
+  });
+
+  it('a message to a task that has not started goes into its first prompt', async () => {
+    const { ctx, orch } = setup();
+    const t = createTask(ctx, { project_slug: 'selftest', title: 'plain change' });
+    expect(orch.message(t.id, 'Keep it short').task.status).toBe('inbox');
+    expect(pendingForAgent(ctx, t.id)).toHaveLength(1);
+    orch.start(t.id);
+    expect(pendingForAgent(ctx, t.id)).toHaveLength(0);
+    await orch.wait(t.id);
+  });
+
+  it('a message that arrives after the last tool call continues the run instead of going to review', async () => {
+    const { ctx, orch } = setup();
+    const t = createTask(ctx, { project_slug: 'selftest', title: 'SLOW change' });
+    orch.start(t.id);
+    expect(orch.message(t.id, 'Also mention the changelog').task.status).toBe('in_progress');
+    await orch.wait(t.id);
+    expect(getTask(ctx, t.id).status).toBe('review');
+    expect(listRuns(ctx, t.id).map((x) => x.kind)).toEqual(['start', 'resume']);
+    expect(listEvents(ctx, t.id).some((e) => e.type === 'task.owner_input_continue')).toBe(true);
+    expect(pendingForAgent(ctx, t.id)).toHaveLength(0);
   });
 });

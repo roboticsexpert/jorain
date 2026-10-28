@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { BrainEvent, Priority, Question, Run, SyncResult, Task, TaskDetail, TaskStatus } from '../api/types';
+import type { BrainEvent, Priority, Question, Run, SyncResult, Task, TaskDetail, TaskMessage, TaskStatus } from '../api/types';
 import { STATUS_LABEL } from '../api/types';
 import { useLive, useReconnect, useSse } from '../live';
 import { errorMessage, fullDate, timeAgo } from '../lib/util';
 import { AnsweredQuestion, QuestionForm } from './QuestionForm';
 import { useMilestones } from './milestones';
 import { RunLog } from './RunLog';
+import { Thread } from './Thread';
 import {
   ConfirmButton,
   ErrorBox,
@@ -64,6 +65,10 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
     }
     if ((type === 'question.created' || type === 'question.answered') && (data as Question).task_id === taskId) void load();
     if ((type === 'run.started' || type === 'run.ended') && (data as Run).task_id === taskId) void load();
+    if (type === 'task.message' && (data as TaskMessage).task_id === taskId) {
+      const m = data as TaskMessage;
+      setDetail((d) => (d ? { ...d, messages: d.messages.some((x) => x.id === m.id) ? d.messages.map((x) => (x.id === m.id ? m : x)) : [...d.messages, m] } : d));
+    }
   });
 
   async function act(fn: () => Promise<Task>, msg: Msg) {
@@ -136,7 +141,7 @@ function DrawerBody({
   onClose: () => void;
   reload: () => void;
 }) {
-  const { task, questions, runs, commits, events } = detail;
+  const { task, questions, runs, commits, events, messages } = detail;
   const [note, setNote] = useState('');
   const [sync, setSync] = useState<SyncResult | null>(null);
   const { milestones } = useMilestones(task.project_slug);
@@ -403,6 +408,8 @@ function DrawerBody({
           {task.body.trim() ? <Markdown source={task.body} /> : <p className="muted">No description.</p>}
         </section>
       )}
+
+      <Thread task={task} messages={messages} onChanged={reload} />
 
       {questions.length > 0 && (
         <section className="section">
@@ -739,6 +746,16 @@ function describeEvent(e: BrainEvent): React.ReactNode {
         : `Checks failed (${String(p.command)}, exit ${String(p.exit_code)})`;
     case 'task.verify_fix':
       return `Failed checks sent back to the agent (attempt ${String(p.attempt)})`;
+    case 'task.owner_input_continue':
+      return 'Your message arrived as the run ended: the session continued with it';
+    case 'message.created':
+      return p.author === 'owner' ? 'You wrote to Claude' : p.kind === 'action' ? 'Claude handed you a to-do' : 'Claude posted an update';
+    case 'message.updated':
+      return 'To-do resolved';
+    case 'message.delivered':
+      return 'Claude received your input';
+    case 'message.read':
+      return `Read ${String(p.count)} update${p.count === 1 ? '' : 's'}`;
     case 'question.created':
       return 'Asked a question';
     case 'question.answered':

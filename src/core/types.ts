@@ -55,6 +55,11 @@ export interface Task {
   verify_status: VerifyStatus | null;
   /** The schedule that queued this task, if any. */
   schedule_id: string | null;
+  /** Set while the agent waits for the owner (wait_for_owner): for an action, or for any message. */
+  waiting_for: WaitFor | null;
+  /** Agent to-dos for the owner that are still open, and agent updates the owner has not read. */
+  open_actions: number;
+  unread_updates: number;
   created_at: string;
   updated_at: string;
 }
@@ -117,6 +122,38 @@ export interface Question {
   answer: Answer[] | null;
   asked_at: string;
   answered_at: string | null;
+}
+
+export interface WaitFor {
+  tool_use_id: string;
+  /** The action the agent waits for; null = any new message from the owner. */
+  action_id: string | null;
+  since: string;
+}
+
+export type MessageKind = 'update' | 'action' | 'message';
+export type ActionStatus = 'open' | 'done' | 'declined';
+
+/** One entry of a task's thread (docs/07-task-thread.md). */
+export interface TaskMessage {
+  id: string;
+  task_id: string;
+  task_title: string;
+  project_slug: string;
+  author: 'agent' | 'owner';
+  /** update: material for the owner · action: something the owner has to do · message: plain chat. */
+  kind: MessageKind;
+  title: string;
+  body: string;
+  /** Actions only. */
+  status: ActionStatus | null;
+  /** The owner's note when resolving an action. */
+  note: string | null;
+  created_at: string;
+  read_at: string | null;
+  /** When the agent got this row's latest owner input; null while it is pending (or never needed). */
+  delivered_at: string | null;
+  resolved_at: string | null;
 }
 
 export interface Run {
