@@ -241,11 +241,6 @@ export function createApp(ctx: Ctx, orch: Orchestrator, comp: Composer = new Com
   });
 
   // Task composer (docs/08-task-composer.md)
-  const createStatus = (v: unknown): 'inbox' | 'todo' => {
-    if (v === undefined) return 'todo';
-    if (v !== 'inbox' && v !== 'todo') throw badRequest('status must be inbox or todo');
-    return v;
-  };
   const chatDetail = (id: string) => ({ chat: composer.getChat(ctx, id), messages: composer.listChatMessages(ctx, id), drafts: composer.listDrafts(ctx, id) });
   api.get('/composer/chats', (c) => c.json(composer.listChats(ctx, c.req.query('project') || undefined)));
   api.post('/composer/chats', async (c) => {
@@ -269,15 +264,13 @@ export function createApp(ctx: Ctx, orch: Orchestrator, comp: Composer = new Com
     comp.stop(c.req.param('id'));
     return c.json(composer.getChat(ctx, c.req.param('id')));
   });
-  api.post('/composer/chats/:id/create-all', async (c) => {
-    const b = c.req.header('content-type')?.includes('json') ? await body(c) : {};
-    const tasks = composer.createAllDrafts(ctx, c.req.param('id'), createStatus(b.status));
+  api.post('/composer/chats/:id/create-all', (c) => {
+    const tasks = composer.createAllDrafts(ctx, c.req.param('id'));
     return c.json({ tasks: tasks.map(toPublicTask), drafts: composer.listDrafts(ctx, c.req.param('id')) });
   });
   api.patch('/composer/drafts/:id', async (c) => c.json(composer.updateDraft(ctx, c.req.param('id'), await body(c))));
-  api.post('/composer/drafts/:id/create', async (c) => {
-    const b = c.req.header('content-type')?.includes('json') ? await body(c) : {};
-    const { draft, task } = composer.createFromDraft(ctx, c.req.param('id'), createStatus(b.status));
+  api.post('/composer/drafts/:id/create', (c) => {
+    const { draft, task } = composer.createFromDraft(ctx, c.req.param('id'));
     return c.json({ draft, task: toPublicTask(task) });
   });
   api.post('/composer/drafts/:id/discard', (c) => c.json(composer.discardDraft(ctx, c.req.param('id'))));

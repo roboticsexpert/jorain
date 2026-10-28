@@ -1,7 +1,8 @@
 /**
  * MCP server (stdio) for a task composer session (docs/08-task-composer.md), with BRAIN_DIR /
  * BRAIN_COMPOSER_ID / BRAIN_PROJECT in its env. Exposed to the model as mcp__brain__<name>. The session
- * only proposes drafts; the owner creates the tasks from them.
+ * only proposes drafts (for its project or another project of the group); the owner creates the tasks
+ * from them, into the inbox.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -33,26 +34,27 @@ export function buildComposerServer(ctx: Ctx, env: { chatId: string; project: st
   const reachable = (slug: string) => slug === env.project || siblings(ctx, env.project).some((s) => s.slug === slug);
 
   const draftFields = {
+    project: z.string().optional().describe("Slug of another project of this product's group (see the prompt) when the work belongs there, e.g. the backend part of a frontend feature. Omit for this project."),
     body: z.string().optional().describe('Markdown: what to do and why, relevant files or context, and "## Acceptance criteria" as a checklist.'),
     priority: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().describe('1 low, 2 normal (default), 3 high.'),
-    milestone: z.string().optional().describe("Id or exact title of one of the project's milestones."),
-    depends_on: z.array(z.string()).optional().describe('Ids of existing tasks (t_...) or of drafts in this chat (d_...) that must be done first.'),
+    milestone: z.string().optional().describe("Id or exact title of one of the target project's milestones."),
+    depends_on: z.array(z.string()).optional().describe('Ids of existing tasks (t_...) or of drafts in this chat (d_...) that must be done first, in any project of the group.'),
   };
 
   server.registerTool(
     'propose_task',
     {
       description:
-        'Propose one task to the owner. It shows as a draft card next to the chat; the owner edits it and decides whether to create it. Each task should fit one agent session (well under 30 minutes of work) and be understandable on its own by an agent that has not seen this chat.',
+        'Propose one task to the owner. It shows as a draft card next to the chat; the owner edits it and decides whether to create it (it goes to that project\'s inbox). Each task should fit one agent session (well under 30 minutes of work) and be understandable on its own by an agent that has not seen this chat.',
       inputSchema: { title: z.string().min(1), ...draftFields },
     },
-    async (input) => attempt(() => addDraft(ctx, env.chatId, input), (d) => `Draft ${d.id} proposed: ${d.title}`),
+    async (input) => attempt(() => addDraft(ctx, env.chatId, input), (d) => `Draft ${d.id} proposed${d.project_slug ? ` for ${d.project_slug}` : ''}: ${d.title}`),
   );
 
   server.registerTool(
     'revise_draft',
     {
-      description: 'Change one of your open drafts when the owner asks (only the fields you pass change; depends_on replaces the list).',
+      description: 'Change one of your open drafts when the owner asks (only the fields you pass change; depends_on replaces the list; moving it to another project drops its milestone unless you pass one).',
       inputSchema: { draft_id: z.string(), title: z.string().optional(), ...draftFields },
     },
     async ({ draft_id, ...patch }) =>

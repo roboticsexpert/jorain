@@ -216,7 +216,7 @@ export function composerPrompt(ctx: Ctx, project: Project): string {
       ? `- Look at the repository (${project.repo_path}) with Read, Glob and Grep to ground tasks in the real code: name the files, modules and conventions an agent should touch.`
       : '- The project has no repository; use the project folder and the knowledge base for context.',
     '- When a task is clear enough, propose it with mcp__brain__propose_task: a specific title, a body an agent can follow without this chat (context, what to do, relevant files, "## Acceptance criteria" as a checklist), priority, milestone and depends_on. Split big work into tasks that each fit one agent session (well under 30 minutes) and wire their order with depends_on (draft ids work).',
-    "- The owner reviews drafts next to the chat and creates, edits or discards them. When they ask for changes, use mcp__brain__revise_draft instead of proposing a duplicate. Check mcp__brain__list_drafts when you need the drafts' current state.",
+    "- The owner reviews drafts next to the chat and creates (into the project's inbox), edits or discards them. When they ask for changes, use mcp__brain__revise_draft instead of proposing a duplicate. Check mcp__brain__list_drafts when you need the drafts' current state.",
     '- Check the board below (or mcp__brain__project_board) and do not propose tasks that already exist.',
     '- After your first proposal, or once the topic is clear, set a short chat title with mcp__brain__set_chat_title.',
     '- After proposing, say in one or two lines what you proposed and what is still open. Do not repeat the drafts in full in the chat.',
@@ -230,7 +230,7 @@ export function composerPrompt(ctx: Ctx, project: Project): string {
       '',
       '## Other parts of the product',
       '',
-      'Propose tasks for this project only. When it needs work from another part, say so to the owner; you can read their repositories and boards (mcp__brain__project_board({ project })).',
+      "A feature often needs work in several parts. Propose each piece in the project it belongs to (mcp__brain__propose_task({ project, ... })), state the contract between them (endpoints, fields, types) in both tasks, and wire the order with depends_on. Read the other parts' repositories and boards (mcp__brain__project_board({ project })) first.",
       '',
       sibs.map((x) => `- ${x.name} (\`${x.slug}\`)${x.repo_path ? `: ${x.repo_path}` : ''}`).join('\n'),
     );

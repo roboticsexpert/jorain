@@ -1,6 +1,6 @@
 # Task composer: create tasks by talking to an AI (built 2026-10-28)
 
-Status: **built.** Discussed with the owner on 2026-10-28; the owner chose a chat in the web UI. Open points are at the end.
+Status: **built.** Discussed with the owner on 2026-10-28: a chat in the web UI, tasks go to the inbox only, drafts may target any project of the group, no owner-MCP access.
 
 ## The need (owner's words, summarised)
 
@@ -22,12 +22,16 @@ chats per project on the left, the conversation in the middle, draft tasks on th
   The project's own MCP servers are not loaded (`--strict-mcp-config` with only the composer server).
 - **Composer MCP server** (`src/mcp/composer.ts`, exposed as `mcp__brain__*`): `propose_task`, `revise_draft`,
   `discard_draft`, `list_drafts`, `set_chat_title`, `project_board`, `search_knowledge`. It cannot create
-  tasks, only drafts.
-- **Drafts.** Title, Markdown body (with acceptance criteria), priority, milestone (validated) and depends_on
-  (existing task ids or draft ids of the same chat). The owner edits, discards or **Creates** them, one at a time
-  or with "Create all". The panel sets the column: Todo (Claude starts it) or Inbox. "Create all" creates
-  dependencies first and maps draft ids to the new task ids. A dependency on a discarded draft is dropped.
-- **Storage** (migration `0009_composer.sql`): `composer_chats` (session id, status idle/thinking, cost),
+  or start tasks, only drafts. `propose_task` / `revise_draft` take an optional `project`: another project of
+  the chat project's group (e.g. the backend piece of a frontend feature). Projects outside the group are refused.
+- **Drafts.** Target project (`project_slug`, NULL = the chat's project; a 🧩 chip shows other projects), title,
+  Markdown body (with acceptance criteria), priority, milestone (validated against the target project; moving a
+  draft to another project drops it) and depends_on (existing task ids or draft ids of the same chat, across the
+  group). The owner edits (project too), discards or **Creates** them, one at a time or with "Create all".
+  Created tasks always go to their project's **inbox** (owner's choice): nothing starts until the owner moves or
+  starts it. "Create all" creates dependencies first and maps draft ids to the new task ids. A dependency on a
+  discarded draft is dropped.
+- **Storage** (migrations `0009_composer.sql`, `0010_composer_draft_project.sql`): `composer_chats` (session id, status idle/thinking, cost),
   `composer_messages` (owner/assistant/error), `composer_drafts`. Chats stuck in `thinking` after a server
   restart are reset with an error message.
 - **Live.** SSE events `composer.chat`, `composer.message`, `composer.draft`, `composer.deleted`. Drafts are
@@ -39,8 +43,8 @@ Verified end to end on 2026-10-28 with the real CLI against a scratch BRAIN_DIR 
 in `.claude/launch.json`). A two-turn chat proposed tasks, revised a priority, added a third task, then "Create all" put
 3 inbox tasks on the board with the right dependencies. One turn costs roughly $0.20–0.30 on this repo.
 
-## Open points for the owner
+## Decided with the owner (2026-10-28)
 
-1. Should the composer be able to start a task right away, or only create it (current behaviour)?
-2. Should it also be reachable from the owner MCP (`secondbrain`), e.g. `compose(project, message)`?
-3. Should a chat be able to propose tasks for sibling projects of a group (today: this project only)?
+1. The composer only creates tasks, always into the inbox; it never starts them. There is no Todo option.
+2. No composer access from the owner MCP (`secondbrain`): the web UI is the only way in.
+3. Drafts may target any project of the chat project's group.

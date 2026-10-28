@@ -194,8 +194,8 @@ Tools: `overview` (start here), `list_projects`, `add_project`, `list_tasks`, `g
 
 Web UI → **Compose** (or "💬 Compose with Claude" on the Board). Pick the project, describe what you want, and Claude
 (read-only: it reads the repo, PROJECT.md and the board) asks what is unclear and proposes draft tasks next to the chat.
-Edit or discard drafts, or ask for changes in the chat, then **Create** them one by one or with **Create all**, into
-Todo (agents start them) or Inbox. Each reply is a `claude -p` turn on your subscription; logs are in
+Edit or discard drafts, or ask for changes in the chat, then **Create** them one by one or with **Create all**. They
+always go to the inbox. In a group, Claude can also propose tasks for the other projects of the group (shown with a 🧩 chip). Each reply is a `claude -p` turn on your subscription; logs are in
 `brain/runs/composer/<chat-id>.jsonl`. Details: docs/08-task-composer.md.
 
 ## How a task flows

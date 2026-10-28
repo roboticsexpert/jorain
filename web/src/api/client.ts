@@ -139,11 +139,9 @@ export const api = {
   sendComposer: (id: string, body: string) =>
     request<{ chat: ComposerChat; message: ComposerMessage }>('POST', `/api/composer/chats/${id}/messages`, { body }),
   stopComposer: (id: string) => request<ComposerChat>('POST', `/api/composer/chats/${id}/stop`),
-  createAllDrafts: (id: string, status: 'inbox' | 'todo') =>
-    request<{ tasks: Task[]; drafts: ComposerDraft[] }>('POST', `/api/composer/chats/${id}/create-all`, { status }),
+  createAllDrafts: (id: string) => request<{ tasks: Task[]; drafts: ComposerDraft[] }>('POST', `/api/composer/chats/${id}/create-all`),
   updateDraft: (id: string, p: DraftPatch) => request<ComposerDraft>('PATCH', `/api/composer/drafts/${id}`, p),
-  createFromDraft: (id: string, status: 'inbox' | 'todo') =>
-    request<{ draft: ComposerDraft; task: Task }>('POST', `/api/composer/drafts/${id}/create`, { status }),
+  createFromDraft: (id: string) => request<{ draft: ComposerDraft; task: Task }>('POST', `/api/composer/drafts/${id}/create`),
   discardDraft: (id: string) => request<ComposerDraft>('POST', `/api/composer/drafts/${id}/discard`),
 
   schedules: (project?: string) => request<Schedule[]>('GET', `/api/schedules${q({ project })}`),

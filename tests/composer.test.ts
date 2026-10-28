@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 import { addDraft, createAllDrafts, createChat, createFromDraft, discardDraft, getChat, listChatMessages, listDrafts, updateDraft } from '../src/core/composer.ts';
+import { createGroup } from '../src/core/groups.ts';
 import { createMilestone } from '../src/core/milestones.ts';
 import { createProject } from '../src/core/projects.ts';
 import { createTask, getTask } from '../src/core/tasks.ts';
@@ -32,7 +33,7 @@ describe('task composer', { timeout: 20_000 }, () => {
     expect(() => createFromDraft(ctx, ui.id)).toThrow(/create that one first/);
     updateDraft(ctx, ui.id, { title: 'Customer list page (paged)' });
 
-    const tasks = createAllDrafts(ctx, chat.id, 'inbox');
+    const tasks = createAllDrafts(ctx, chat.id);
     expect(tasks.map((t) => t.title)).toEqual(['Customer API', 'Customer list page (paged)']);
     const [a, b] = tasks;
     expect(a).toMatchObject({ priority: 3, milestone_id: m.id, depends_on: [existing.id], status: 'inbox' });
@@ -40,6 +41,31 @@ describe('task composer', { timeout: 20_000 }, () => {
     expect(getTask(ctx, b.id).body).toContain('Acceptance criteria');
     expect(listDrafts(ctx, chat.id).map((d) => d.status)).toEqual(['created', 'created', 'discarded']);
     expect(() => updateDraft(ctx, api.id, { title: 'x' })).toThrow(/only open drafts/);
+  });
+
+  it('drafts can target other projects of the group, never projects outside it', () => {
+    const ctx = setup();
+    createProject(ctx, { slug: 'api', name: 'API', repo_path: tempRepo() });
+    createProject(ctx, { slug: 'blog', name: 'Blog' });
+    createGroup(ctx, { slug: 'store', name: 'Store', projects: ['shop', 'api'] });
+    const m = createMilestone(ctx, 'api', { title: 'API v1' });
+    const chat = createChat(ctx, 'shop');
+    const endpoint = addDraft(ctx, chat.id, { project: 'api', title: 'GET /customers', milestone: 'API v1' });
+    const page = addDraft(ctx, chat.id, { title: 'Customer page', depends_on: [endpoint.id] });
+    expect(endpoint.project_slug).toBe('api');
+    expect(page.project_slug).toBeNull();
+    expect(() => addDraft(ctx, chat.id, { project: 'blog', title: 'x' })).toThrow(/not part of this chat's group/);
+    expect(() => addDraft(ctx, chat.id, { title: 'x', milestone: 'API v1' })).toThrow();
+
+    // Moving a draft drops a milestone of the old project.
+    const moved = addDraft(ctx, chat.id, { project: 'api', title: 'Moved', milestone: m.id });
+    expect(updateDraft(ctx, moved.id, { project: 'shop' })).toMatchObject({ project_slug: null, milestone: null });
+
+    // Ready drafts first (the endpoint, the moved one), then the page that waits on the endpoint.
+    const [a, b, c] = createAllDrafts(ctx, chat.id);
+    expect(a).toMatchObject({ title: 'GET /customers', project_slug: 'api', milestone_id: m.id, status: 'inbox' });
+    expect(b).toMatchObject({ title: 'Moved', project_slug: 'shop' });
+    expect(c).toMatchObject({ title: 'Customer page', project_slug: 'shop', depends_on: [a.id], status: 'inbox' });
   });
 
   it('a draft cannot depend on a draft of another chat', () => {

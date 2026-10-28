@@ -273,16 +273,16 @@ Non-blocking traffic between a running agent and the owner (docs/07-task-thread.
 - Open actions do not block review or approve.
 
 ### Task composer
-A chat per project that drafts tasks (docs/08-task-composer.md). `ComposerChat { id, project_slug, title, session_id, status: 'idle'|'thinking', cost_usd, created_at, updated_at }`, `ComposerMessage { id, chat_id, role: 'owner'|'assistant'|'error', body, created_at }`, `ComposerDraft { id, chat_id, title, body, priority, milestone (id or title), depends_on (task ids and/or draft ids of the chat), status: 'draft'|'created'|'discarded', task_id, created_at, updated_at }`.
+A chat per project that drafts tasks (docs/08-task-composer.md). `ComposerChat { id, project_slug, title, session_id, status: 'idle'|'thinking', cost_usd, created_at, updated_at }`, `ComposerMessage { id, chat_id, role: 'owner'|'assistant'|'error', body, created_at }`, `ComposerDraft { id, chat_id, project_slug (another project of the group, null = the chat's), title, body, priority, milestone (id or title), depends_on (task ids and/or draft ids of the chat), status: 'draft'|'created'|'discarded', task_id, created_at, updated_at }`.
 - `GET /api/composer/chats?project=<slug>` → `ComposerChat[]` (newest first)
 - `POST /api/composer/chats` body `{ project, title?, message? }` → `{ chat, messages, drafts }` (201). With `message`, the first turn starts right away.
 - `GET /api/composer/chats/:id` → `{ chat, messages, drafts }`
 - `DELETE /api/composer/chats/:id` → 204 (409 while it is thinking). Created tasks stay.
 - `POST /api/composer/chats/:id/messages` body `{ body }` → `{ chat, message }` (201). Starts a turn in the background; the reply arrives as a `composer.message` event. 409 while the previous turn runs.
 - `POST /api/composer/chats/:id/stop` → `ComposerChat` (kills the running turn; an `error` message "Stopped." follows)
-- `POST /api/composer/chats/:id/create-all` body `{ status?: 'todo'|'inbox' }` (default todo) → `{ tasks, drafts }`: every open draft, dependencies first
-- `PATCH /api/composer/drafts/:id` body any of `{ title, body, priority, milestone, depends_on }` → `ComposerDraft` (409 unless open)
-- `POST /api/composer/drafts/:id/create` body `{ status?: 'todo'|'inbox' }` → `{ draft, task }`. 409 if it depends on a draft not created yet. A dependency on a discarded draft is dropped.
+- `POST /api/composer/chats/:id/create-all` → `{ tasks, drafts }`: every open draft as an inbox task in its project, dependencies first
+- `PATCH /api/composer/drafts/:id` body any of `{ project, title, body, priority, milestone, depends_on }` → `ComposerDraft` (409 unless open; 400 for a project outside the group; changing project drops the milestone unless one is given)
+- `POST /api/composer/drafts/:id/create` → `{ draft, task }` (an inbox task in the draft's project). 409 if it depends on a draft not created yet. A dependency on a discarded draft is dropped.
 - `POST /api/composer/drafts/:id/discard` → `ComposerDraft`
 
 ### Questions

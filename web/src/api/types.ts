@@ -364,6 +364,8 @@ export interface ComposerMessage {
 export interface ComposerDraft {
   id: string;
   chat_id: string;
+  /** Another project of the chat's group; null = the chat's project. */
+  project_slug: string | null;
   title: string;
   body: string;
   priority: Priority;
@@ -383,7 +385,7 @@ export interface ComposerDetail {
   drafts: ComposerDraft[];
 }
 
-export type DraftPatch = Partial<Pick<ComposerDraft, 'title' | 'body' | 'priority' | 'milestone' | 'depends_on'>>;
+export type DraftPatch = Partial<Pick<ComposerDraft, 'title' | 'body' | 'priority' | 'milestone' | 'depends_on'>> & { project?: string };
 
 // SSE event map: type -> data
 export interface SseEvents {

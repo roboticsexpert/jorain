@@ -1,14 +1,12 @@
-// Task composer (docs/08-task-composer.md): chat with Claude about a project, get draft tasks, create the ones you want.
+// Task composer (docs/08-task-composer.md): chat with Claude about a project, get draft tasks, create the ones you want (into the inbox).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { ComposerChat, ComposerDetail, ComposerDraft, ComposerMessage, Milestone, Priority, Project } from '../api/types';
+import type { ComposerChat, ComposerDetail, ComposerDraft, ComposerMessage, Priority, Project } from '../api/types';
 import { useMilestones } from '../components/milestones';
 import { Clawd, ConfirmButton, Empty, ErrorBox, Markdown, PriorityBadge, Spinner } from '../components/ui';
 import { useLive, useReconnect, useSse } from '../live';
 import { cx, errorMessage, timeAgo } from '../lib/util';
-
-type Column = 'inbox' | 'todo';
 
 export function ComposePage() {
   const [params, setParams] = useSearchParams();
@@ -18,6 +16,9 @@ export function ComposePage() {
   const active = projects.filter((p) => p.status === 'active');
   const slug = params.get('project') || active[0]?.slug || '';
   const chatId = params.get('chat');
+  // Drafts may go to any project of the selected project's group.
+  const home = projects.find((p) => p.slug === slug);
+  const groupProjects = home?.group_slug ? active.filter((p) => p.group_slug === home.group_slug) : home ? [home] : [];
 
   const setParam = useCallback(
     (changes: Record<string, string | null>) =>
@@ -101,7 +102,7 @@ export function ComposePage() {
             ))}
           </aside>
           {chatId ? (
-            <ChatView key={chatId} chatId={chatId} slug={slug} onDeleted={() => setParam({ chat: null })} />
+            <ChatView key={chatId} chatId={chatId} slug={slug} groupProjects={groupProjects} onDeleted={() => setParam({ chat: null })} />
           ) : (
             <NewChat key={slug} slug={slug} onCreated={(id) => setParam({ chat: id })} />
           )}
@@ -139,7 +140,7 @@ function NewChat({ slug, onCreated }: { slug: string; onCreated: (id: string) =>
   );
 }
 
-function ChatView({ chatId, slug, onDeleted }: { chatId: string; slug: string; onDeleted: () => void }) {
+function ChatView({ chatId, slug, groupProjects, onDeleted }: { chatId: string; slug: string; groupProjects: Project[]; onDeleted: () => void }) {
   const { toastError } = useLive();
   const [detail, setDetail] = useState<ComposerDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -236,7 +237,7 @@ function ChatView({ chatId, slug, onDeleted }: { chatId: string; slug: string; o
         </div>
         <MessageBox value={text} onChange={setText} onSend={send} busy={sending || thinking} placeholder={thinking ? 'Claude is answering…' : 'Reply, refine a draft, or ask for more tasks'} />
       </section>
-      <DraftsPanel chatId={chatId} slug={slug} drafts={drafts} onChange={(dr) => setDetail((d) => d && { ...d, drafts: dr })} />
+      <DraftsPanel chatId={chatId} slug={slug} groupProjects={groupProjects} drafts={drafts} onChange={(dr) => setDetail((d) => d && { ...d, drafts: dr })} />
     </>
   );
 }
@@ -287,10 +288,20 @@ function MessageBox({
   );
 }
 
-function DraftsPanel({ chatId, slug, drafts, onChange }: { chatId: string; slug: string; drafts: ComposerDraft[]; onChange: (d: ComposerDraft[]) => void }) {
+function DraftsPanel({
+  chatId,
+  slug,
+  groupProjects,
+  drafts,
+  onChange,
+}: {
+  chatId: string;
+  slug: string;
+  groupProjects: Project[];
+  drafts: ComposerDraft[];
+  onChange: (d: ComposerDraft[]) => void;
+}) {
   const { toast, toastError } = useLive();
-  const { milestones } = useMilestones(slug);
-  const [column, setColumn] = useState<Column>('todo');
   const [showClosed, setShowClosed] = useState(false);
   const open = drafts.filter((d) => d.status === 'draft');
   const closed = drafts.filter((d) => d.status !== 'draft');
@@ -298,9 +309,9 @@ function DraftsPanel({ chatId, slug, drafts, onChange }: { chatId: string; slug:
 
   async function createAll() {
     try {
-      const r = await api.createAllDrafts(chatId, column);
+      const r = await api.createAllDrafts(chatId);
       onChange(r.drafts);
-      toast(`Created ${r.tasks.length} task${r.tasks.length === 1 ? '' : 's'} in ${column}`);
+      toast(`Created ${r.tasks.length} task${r.tasks.length === 1 ? '' : 's'} in the inbox`);
     } catch (e) {
       toastError(e);
     }
@@ -312,15 +323,10 @@ function DraftsPanel({ chatId, slug, drafts, onChange }: { chatId: string; slug:
         <h2>
           Drafts <span className="count">{open.length}</span>
         </h2>
-        <span className="grow" />
-        <select value={column} onChange={(e) => setColumn(e.target.value as Column)} aria-label="Create into">
-          <option value="todo">→ Todo (Claude starts it)</option>
-          <option value="inbox">→ Inbox (waits for you)</option>
-        </select>
       </header>
-      {open.length === 0 && <p className="hint">Tasks Claude proposes show up here. Edit them, then create the ones you want.</p>}
+      {open.length === 0 && <p className="hint">Tasks Claude proposes show up here. Edit them, then create the ones you want: they go to the inbox.</p>}
       {open.map((d) => (
-        <DraftCard key={d.id} draft={d} byId={byId} milestones={milestones} column={column} slug={slug} />
+        <DraftCard key={d.id} draft={d} byId={byId} slug={slug} groupProjects={groupProjects} />
       ))}
       {open.length > 1 && (
         <button type="button" className="btn-primary" onClick={createAll}>
@@ -332,7 +338,7 @@ function DraftsPanel({ chatId, slug, drafts, onChange }: { chatId: string; slug:
           {showClosed ? 'Hide' : 'Show'} created &amp; discarded ({closed.length})
         </button>
       )}
-      {showClosed && closed.map((d) => <DraftCard key={d.id} draft={d} byId={byId} milestones={milestones} column={column} slug={slug} />)}
+      {showClosed && closed.map((d) => <DraftCard key={d.id} draft={d} byId={byId} slug={slug} groupProjects={groupProjects} />)}
     </aside>
   );
 }
@@ -340,15 +346,13 @@ function DraftsPanel({ chatId, slug, drafts, onChange }: { chatId: string; slug:
 function DraftCard({
   draft,
   byId,
-  milestones,
-  column,
   slug,
+  groupProjects,
 }: {
   draft: ComposerDraft;
   byId: Map<string, ComposerDraft>;
-  milestones: Milestone[];
-  column: Column;
   slug: string;
+  groupProjects: Project[];
 }) {
   const { toastError } = useLive();
   const [editing, setEditing] = useState(false);
@@ -358,14 +362,20 @@ function DraftCard({
   const [body, setBody] = useState(draft.body);
   const [priority, setPriority] = useState<Priority>(draft.priority);
   const [milestone, setMilestone] = useState(draft.milestone ?? '');
+  const target = draft.project_slug ?? slug;
+  const [project, setProject] = useState(target);
+  // While editing, milestones follow the project picked in the form.
+  const { milestones } = useMilestones(editing ? project : target);
   const open = draft.status === 'draft';
   const ms = milestones.find((m) => m.id === draft.milestone || m.title === draft.milestone);
+  const projectName = (s: string) => groupProjects.find((p) => p.slug === s)?.name ?? s;
 
   function startEdit() {
     setTitle(draft.title);
     setBody(draft.body);
     setPriority(draft.priority);
     setMilestone(ms?.id ?? draft.milestone ?? '');
+    setProject(target);
     setEditing(true);
   }
 
@@ -388,11 +398,27 @@ function DraftCard({
         className="card cmp-draft form"
         onSubmit={async (e) => {
           e.preventDefault();
-          if (await run(() => api.updateDraft(draft.id, { title: title.trim(), body, priority, milestone: milestone || null }))) setEditing(false);
+          if (await run(() => api.updateDraft(draft.id, { project, title: title.trim(), body, priority, milestone: milestone || null }))) setEditing(false);
         }}
       >
         <input required value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Title" />
         <textarea rows={8} value={body} onChange={(e) => setBody(e.target.value)} aria-label="Details" />
+        {groupProjects.length > 1 && (
+          <select
+            value={project}
+            onChange={(e) => {
+              setProject(e.target.value);
+              setMilestone('');
+            }}
+            aria-label="Project"
+          >
+            {groupProjects.map((p) => (
+              <option key={p.slug} value={p.slug}>
+                🧩 {p.name}
+              </option>
+            ))}
+          </select>
+        )}
         <div className="grid2">
           <select value={priority} onChange={(e) => setPriority(Number(e.target.value) as Priority)} aria-label="Priority">
             <option value={3}>High</option>
@@ -429,6 +455,7 @@ function DraftCard({
         <PriorityBadge priority={draft.priority} />
       </div>
       <div className="cmp-draft-meta">
+        {target !== slug && <span className="badge proj-chip">🧩 {projectName(target)}</span>}
         {(ms || draft.milestone) && <span className="badge">🎯 {ms?.title ?? draft.milestone}</span>}
         {draft.depends_on.map((d) => (
           <span key={d} className="badge" title={d}>
@@ -436,7 +463,7 @@ function DraftCard({
           </span>
         ))}
         {draft.status === 'created' && draft.task_id && (
-          <Link className="badge ok" to={`/board?project=${encodeURIComponent(slug)}&task=${draft.task_id}`}>
+          <Link className="badge ok" to={`/board?project=${encodeURIComponent(target)}&task=${draft.task_id}`}>
             ✅ {draft.task_id}
           </Link>
         )}
@@ -462,7 +489,7 @@ function DraftCard({
             <button type="button" className="btn-ghost" onClick={startEdit} disabled={busy}>
               Edit
             </button>
-            <button type="button" className="btn-primary" onClick={() => run(() => api.createFromDraft(draft.id, column))} disabled={busy}>
+            <button type="button" className="btn-primary" onClick={() => run(() => api.createFromDraft(draft.id))} disabled={busy} title="Create it in the inbox">
               Create
             </button>
           </>

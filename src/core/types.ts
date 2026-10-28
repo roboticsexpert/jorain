@@ -245,6 +245,8 @@ export type DraftStatus = 'draft' | 'created' | 'discarded';
 export interface ComposerDraft {
   id: string;
   chat_id: string;
+  /** Another project of the chat's group; null = the chat's project. */
+  project_slug: string | null;
   title: string;
   body: string;
   priority: Priority;

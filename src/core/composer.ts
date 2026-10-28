@@ -1,6 +1,7 @@
 import { newId, now } from '../db/client.ts';
 import type { Ctx } from './context.ts';
 import { publish, recordEvent } from './events.ts';
+import { siblings } from './groups.ts';
 import { resolveMilestone } from './milestones.ts';
 import { getProject } from './projects.ts';
 import { createTask, findTask, type TaskRow } from './tasks.ts';
@@ -9,7 +10,7 @@ import { badRequest, conflict, notFound, type ComposerChat, type ComposerDraft, 
 /**
  * Task composer (docs/08-task-composer.md): a chat per project where the owner talks an idea through
  * with a read-only Claude session. The session proposes tasks as drafts; only the owner turns a draft
- * into a real task.
+ * into a real task, always into the inbox. A draft may target any project of the chat's group.
  */
 
 export function findChat(ctx: Ctx, id: string): ComposerChat | undefined {
@@ -90,6 +91,15 @@ export function findChatMessage(ctx: Ctx, id: string): ComposerMessage | undefin
 
 const toDraft = (r: any): ComposerDraft => ({ ...r, depends_on: JSON.parse(r.depends_on) });
 
+/** The chat's project and its group siblings: where its drafts may go. */
+export function chatProjects(ctx: Ctx, chatId: string): string[] {
+  const slug = getChat(ctx, chatId).project_slug;
+  return [slug, ...siblings(ctx, slug).map((p) => p.slug)];
+}
+
+/** Project a draft becomes a task in. */
+export const draftProject = (ctx: Ctx, d: ComposerDraft): string => d.project_slug ?? getChat(ctx, d.chat_id).project_slug;
+
 export function findDraft(ctx: Ctx, id: string): ComposerDraft | undefined {
   const r = ctx.db.prepare('SELECT * FROM composer_drafts WHERE id = ?').get(id);
   return r ? toDraft(r) : undefined;
@@ -106,6 +116,8 @@ export function listDrafts(ctx: Ctx, chatId: string): ComposerDraft[] {
 }
 
 export interface DraftInput {
+  /** Another project of the chat's group; omitted = the chat's project. */
+  project?: string;
   title?: string;
   body?: string;
   priority?: Priority;
@@ -113,10 +125,14 @@ export interface DraftInput {
   depends_on?: string[];
 }
 
-function checkDraftInput(ctx: Ctx, chatId: string, input: DraftInput): void {
+/** Validates the input against `project` (the draft's target project); returns that project. */
+function checkDraftInput(ctx: Ctx, chatId: string, input: DraftInput, current?: string): string {
+  const allowed = chatProjects(ctx, chatId);
+  const project = input.project ?? current ?? allowed[0];
+  if (!allowed.includes(project)) throw badRequest(`project ${project} is not part of this chat's group; drafts can go to ${allowed.join(', ')}`);
   if (input.title !== undefined && !input.title.trim()) throw badRequest('title is required');
   if (input.priority !== undefined && ![1, 2, 3].includes(input.priority)) throw badRequest('priority must be 1, 2 or 3');
-  if (input.milestone) resolveMilestone(ctx, getChat(ctx, chatId).project_slug, input.milestone);
+  if (input.milestone) resolveMilestone(ctx, project, input.milestone);
   if (input.depends_on !== undefined) {
     if (!Array.isArray(input.depends_on) || input.depends_on.some((d) => typeof d !== 'string')) throw badRequest('depends_on must be a list of task or draft ids');
     for (const d of input.depends_on) {
@@ -125,17 +141,18 @@ function checkDraftInput(ctx: Ctx, chatId: string, input: DraftInput): void {
       } else if (!findTask(ctx, d)) throw badRequest(`depends_on: unknown task ${d}`);
     }
   }
+  return project;
 }
 
 /** A new draft (the composer session's propose_task). */
 export function addDraft(ctx: Ctx, chatId: string, input: DraftInput & { title: string }): ComposerDraft {
-  getChat(ctx, chatId);
-  checkDraftInput(ctx, chatId, input);
+  const chat = getChat(ctx, chatId);
+  const project = checkDraftInput(ctx, chatId, input);
   const id = newId('d');
   const t = now();
   ctx.db
-    .prepare('INSERT INTO composer_drafts (id, chat_id, title, body, priority, milestone, depends_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, chatId, input.title.trim(), input.body ?? '', input.priority ?? 2, input.milestone || null, JSON.stringify([...new Set(input.depends_on ?? [])]), t, t);
+    .prepare('INSERT INTO composer_drafts (id, chat_id, project_slug, title, body, priority, milestone, depends_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, chatId, project === chat.project_slug ? null : project, input.title.trim(), input.body ?? '', input.priority ?? 2, input.milestone || null, JSON.stringify([...new Set(input.depends_on ?? [])]), t, t);
   return draftChanged(ctx, id);
 }
 
@@ -143,15 +160,19 @@ export function addDraft(ctx: Ctx, chatId: string, input: DraftInput & { title: 
 export function updateDraft(ctx: Ctx, id: string, patch: DraftInput): ComposerDraft {
   const d = getDraft(ctx, id);
   if (d.status !== 'draft') throw conflict(`draft ${id} is ${d.status}; only open drafts change`);
-  checkDraftInput(ctx, d.chat_id, patch);
+  const home = getChat(ctx, d.chat_id).project_slug;
+  const project = checkDraftInput(ctx, d.chat_id, patch, draftProject(ctx, d));
   if (patch.depends_on?.includes(id)) throw badRequest('a draft cannot depend on itself');
+  // A milestone belongs to one project: moving the draft drops it unless a new one is given.
+  const moved = project !== draftProject(ctx, d);
   ctx.db
-    .prepare('UPDATE composer_drafts SET title = ?, body = ?, priority = ?, milestone = ?, depends_on = ?, updated_at = ? WHERE id = ?')
+    .prepare('UPDATE composer_drafts SET project_slug = ?, title = ?, body = ?, priority = ?, milestone = ?, depends_on = ?, updated_at = ? WHERE id = ?')
     .run(
+      project === home ? null : project,
       patch.title?.trim() ?? d.title,
       patch.body ?? d.body,
       patch.priority ?? d.priority,
-      patch.milestone !== undefined ? patch.milestone || null : d.milestone,
+      patch.milestone !== undefined ? patch.milestone || null : moved ? null : d.milestone,
       JSON.stringify(patch.depends_on ? [...new Set(patch.depends_on)] : d.depends_on),
       now(),
       id,
@@ -174,10 +195,10 @@ function draftChanged(ctx: Ctx, id: string): ComposerDraft {
 }
 
 /**
- * Turns an open draft into a task. Draft dependencies must be created first (createAllDrafts orders
+ * Turns an open draft into an inbox task in its project. Draft dependencies must be created first (createAllDrafts orders
  * them); they map to the tasks those drafts became.
  */
-export function createFromDraft(ctx: Ctx, id: string, status: 'inbox' | 'todo' = 'todo'): { draft: ComposerDraft; task: TaskRow } {
+export function createFromDraft(ctx: Ctx, id: string): { draft: ComposerDraft; task: TaskRow } {
   const d = getDraft(ctx, id);
   if (d.status !== 'draft') throw conflict(`draft ${id} is ${d.status}`);
   const chat = getChat(ctx, d.chat_id);
@@ -190,7 +211,7 @@ export function createFromDraft(ctx: Ctx, id: string, status: 'inbox' | 'todo' =
   });
   const task = createTask(
     ctx,
-    { project_slug: chat.project_slug, title: d.title, body: d.body, priority: d.priority, milestone: d.milestone, status, depends_on: deps.filter((x): x is string => !!x) },
+    { project_slug: draftProject(ctx, d), title: d.title, body: d.body, priority: d.priority, milestone: d.milestone, status: 'inbox', depends_on: deps.filter((x): x is string => !!x) },
     `composer:${chat.id}`,
   );
   ctx.db.prepare("UPDATE composer_drafts SET status = 'created', task_id = ?, updated_at = ? WHERE id = ?").run(task.id, now(), id);
@@ -198,7 +219,7 @@ export function createFromDraft(ctx: Ctx, id: string, status: 'inbox' | 'todo' =
 }
 
 /** Creates every open draft of a chat, dependencies first. */
-export function createAllDrafts(ctx: Ctx, chatId: string, status: 'inbox' | 'todo' = 'todo'): TaskRow[] {
+export function createAllDrafts(ctx: Ctx, chatId: string): TaskRow[] {
   const open = () => listDrafts(ctx, chatId).filter((d) => d.status === 'draft');
   const created: TaskRow[] = [];
   let pending = open();
@@ -206,7 +227,7 @@ export function createAllDrafts(ctx: Ctx, chatId: string, status: 'inbox' | 'tod
     const openIds = new Set(pending.map((d) => d.id));
     const ready = pending.filter((d) => !d.depends_on.some((dep) => openIds.has(dep)));
     if (!ready.length) throw conflict(`drafts ${pending.map((d) => d.id).join(', ')} depend on each other in a cycle`);
-    for (const d of ready) created.push(createFromDraft(ctx, d.id, status).task);
+    for (const d of ready) created.push(createFromDraft(ctx, d.id).task);
     pending = open();
   }
   return created;
