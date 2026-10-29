@@ -129,14 +129,28 @@ export function syncNote(r: SyncResult): string | null {
   ].join(' ');
 }
 
-/** Removes the worktree of a finished task (the branch is kept). Returns whether one was removed. */
-export function removeWorkspace(ctx: Ctx, taskId: string): boolean {
+const removing = new Map<string, Promise<boolean>>();
+
+/**
+ * Removes the worktree of a finished task (the branch is kept). Resolves to whether one was removed.
+ * One removal per task at a time: approve and the scheduler's cleanup may both ask for it.
+ */
+export function removeWorkspace(ctx: Ctx, taskId: string): Promise<boolean> {
+  let p = removing.get(taskId);
+  if (!p) {
+    p = dropWorkspace(ctx, taskId).finally(() => removing.delete(taskId));
+    removing.set(taskId, p);
+  }
+  return p;
+}
+
+async function dropWorkspace(ctx: Ctx, taskId: string): Promise<boolean> {
   const task = getTask(ctx, taskId);
   const repo = getProject(ctx, task.project_slug).repo_path;
   if (!repo || !task.worktree) return false;
   if (existsSync(task.worktree)) {
     if (git.isDirty(task.worktree)) git.commitAll(task.worktree, `WIP: changes left in the worktree when the task finished\n\nTask: ${task.id}\n`);
-    git.removeWorktree(repo, task.worktree);
+    await git.removeWorktree(repo, task.worktree);
   }
   setTaskFields(ctx, taskId, { worktree: null });
   recordEvent(ctx, taskId, 'task.worktree_removed', { path: task.worktree });

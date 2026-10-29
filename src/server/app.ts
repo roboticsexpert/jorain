@@ -164,7 +164,12 @@ export function createApp(ctx: Ctx, orch: Orchestrator, comp: Composer = new Com
   api.get('/tasks/:id', (c) => c.json(taskDetail(ctx, c.req.param('id'))));
   api.patch('/tasks/:id', async (c) => c.json(toPublicTask(updateTask(ctx, c.req.param('id'), await body(c)))));
   api.post('/tasks/:id/start', (c) => c.json(toPublicTask(orch.start(c.req.param('id')))));
-  api.post('/tasks/:id/approve', async (c) => c.json(toPublicTask(await deliver.approveAndPush(ctx, c.req.param('id')))));
+  // Answers once merged; the worktree removal and the push finish in the background and arrive as task.updated.
+  api.post('/tasks/:id/approve', (c) => {
+    const { task, finished } = deliver.startApproval(ctx, c.req.param('id'));
+    finished.catch((err: Error) => console.warn(`[brain] after approving ${task.id}: ${err.message}`));
+    return c.json(toPublicTask(task));
+  });
   api.post('/tasks/:id/merge', (c) => c.json(toPublicTask(deliver.merge(ctx, c.req.param('id')))));
   api.post('/tasks/:id/push', async (c) => c.json(toPublicTask(await deliver.push(ctx, c.req.param('id')))));
   api.post('/tasks/:id/request-changes', async (c) => {

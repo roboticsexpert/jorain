@@ -11,7 +11,7 @@ import { portfolio } from '../src/core/portfolio.ts';
 import { createProject, getProject, readProjectDoc, updateProject } from '../src/core/projects.ts';
 import { createTask, getTask, listTasks, transition } from '../src/core/tasks.ts';
 import { buildServer } from '../src/mcp/server.ts';
-import { approve } from '../src/runner/deliver.ts';
+import { approve, approveAndPush } from '../src/runner/deliver.ts';
 import { Orchestrator } from '../src/runner/orchestrator.ts';
 import { initialPrompt, milestoneCheckPrompt, planPrompt } from '../src/runner/prompt.ts';
 import { Scheduler } from '../src/runner/scheduler.ts';
@@ -51,7 +51,7 @@ describe('worktrees and parallel tasks', { timeout: 30_000 }, () => {
     orch.start(t.id);
     await orch.wait(t.id);
     const wt = getTask(ctx, t.id).worktree!;
-    const done = approve(ctx, t.id);
+    const done = await approveAndPush(ctx, t.id);
     expect(done.status).toBe('done');
     expect(done.worktree).toBeNull();
     expect(existsSync(wt)).toBe(false);

@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { listEvents } from '../src/core/events.ts';
 import { createProject, updateProject } from '../src/core/projects.ts';
 import { createTask, getTask } from '../src/core/tasks.ts';
-import { approve, approveAndPush, push } from '../src/runner/deliver.ts';
+import { approve, approveAndPush, push, startApproval } from '../src/runner/deliver.ts';
 import { Orchestrator } from '../src/runner/orchestrator.ts';
 import { gitOut, tempCtx, tempRepo } from './helpers.ts';
 
@@ -106,6 +106,19 @@ describe('delivery: commit → merge → push', { timeout: 20_000 }, () => {
     expect(t.pushed_at).toBeNull();
     expect(t.push_error).toMatch(/no upstream/);
     expect(types(ctx, id)).toContain('task.push_failed');
+  });
+
+  it('startApproval answers once merged; the push finishes afterwards', async () => {
+    const { ctx, id } = await reviewed();
+    updateProject(ctx, 'p', { push_policy: 'after_merge' });
+    const { task, finished } = startApproval(ctx, id);
+    expect(task.status).toBe('done');
+    expect(task.merged_sha).not.toBeNull();
+    expect(task.pushed_at).toBeNull();
+    expect(task.push_error).toBeNull();
+    const t = await finished;
+    expect(t.push_error).toMatch(/no upstream/);
+    expect(t.worktree).toBeNull();
   });
 
   it('policy never does not push; push before merge is refused', async () => {

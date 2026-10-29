@@ -1,8 +1,9 @@
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { Commit } from '../core/types.ts';
 
 /**
- * Thin git helpers for the project repo and the task worktrees. Synchronous, except `push`. The squash
+ * Thin git helpers for the project repo and the task worktrees. Synchronous, except `removeWorktree` and `push`. The squash
  * merge into the base branch and the push are only called by `deliver.ts` on the owner's approval.
  */
 
@@ -58,9 +59,12 @@ export function addWorktree(repo: string, dir: string, branch: string): void {
   git(repo, ['worktree', 'add', '--quiet', dir, branch]);
 }
 
-/** Removes a linked worktree (ignored files such as node_modules go with it). The branch stays. */
-export function removeWorktree(repo: string, dir: string): void {
-  git(repo, ['worktree', 'remove', '--force', dir]);
+/**
+ * Removes a linked worktree (ignored files such as node_modules go with it). The branch stays. Async:
+ * deleting a worktree full of dependencies takes seconds and must not block the server.
+ */
+export async function removeWorktree(repo: string, dir: string): Promise<void> {
+  await promisify(execFile)('git', ['worktree', 'remove', '--force', dir], { cwd: repo });
 }
 
 /** The worktree path where `branch` is checked out, if any (the main checkout included). */

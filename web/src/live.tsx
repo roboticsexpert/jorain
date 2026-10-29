@@ -1,7 +1,7 @@
 // App-wide live state: one SSE connection, status strip data, the inbox badge count and toasts.
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api, subscribeEvents, type SseHandler } from './api/client';
-import type { Status } from './api/types';
+import type { Status, Task } from './api/types';
 import { errorMessage } from './lib/util';
 
 interface Toast {
@@ -35,6 +35,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const everOpened = useRef(false);
   const handlers = useRef(new Set<SseHandler>());
   const inboxTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Merged tasks whose push had no outcome yet: approve answers before the push ends, so its result is toasted here.
+  const pushPending = useRef(new Set<string>());
 
   const toast = useCallback((text: string, kind: Toast['kind'] = 'info') => {
     const id = Date.now() + Math.random();
@@ -68,6 +70,14 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     return subscribeEvents(
       (type, data) => {
         if (type === 'status') setStatus(data as Status);
+        if (type === 'task.updated') {
+          const t = data as Task;
+          if (t.merged_sha && !t.pushed_at && !t.push_error) pushPending.current.add(t.id);
+          else if (pushPending.current.delete(t.id)) {
+            if (t.pushed_at) toast(`Pushed ${t.merged_into}`);
+            else if (t.push_error) toast(`Push of ${t.merged_into} failed: ${t.push_error}`, 'error');
+          }
+        }
         if (type === 'task.updated' || type === 'question.created' || type === 'question.answered' || type === 'task.message') refreshInbox();
         for (const h of handlers.current) h(type, data);
       },
@@ -82,7 +92,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         everOpened.current = true;
       },
     );
-  }, [loadInbox, refreshInbox]);
+  }, [loadInbox, refreshInbox, toast]);
 
   const subscribe = useCallback((h: SseHandler) => {
     handlers.current.add(h);

@@ -128,11 +128,9 @@ export class Scheduler {
   private cleanWorktrees(): void {
     for (const t of listTasks(this.ctx, { status: ['done'] })) {
       if (!t.worktree || this.orch.active.has(t.id)) continue;
-      try {
-        removeWorkspace(this.ctx, t.id);
-      } catch (err) {
-        this.warn(`worktree:${t.id}`, `could not remove the worktree of ${t.id} (${getProject(this.ctx, t.project_slug).slug}): ${(err as Error).message}`);
-      }
+      removeWorkspace(this.ctx, t.id).catch((err: Error) =>
+        this.warn(`worktree:${t.id}`, `could not remove the worktree of ${t.id} (${getProject(this.ctx, t.project_slug).slug}): ${err.message}`),
+      );
     }
   }
 }

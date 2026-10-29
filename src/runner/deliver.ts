@@ -16,20 +16,22 @@ import { removeWorkspace } from './workspace.ts';
  * the base branch is moved with a compare-and-swap. When the owner has the base branch checked out,
  * it is fast-forwarded instead; uncommitted changes there only block it when they touch the same files.
  * A conflict leaves the task in review.
+ *
+ * Only the merge is synchronous. Removing the worktree and the push can take a minute (a large
+ * node_modules, an unreachable remote), so they run after: see `startApproval`.
  */
 export function approve(ctx: Ctx, id: string): TaskRow {
   const t = getTask(ctx, id);
   if (t.status !== 'review') throw conflict(`task ${id} is ${t.status}, not review`);
   const r = squashMerge(ctx, t);
   approveTask(ctx, id, r ?? {});
-  dropWorktree(ctx, id);
   return getTask(ctx, id);
 }
 
 /** The worktree of a done task is not needed any more (the branch stays). Failures are left to the scheduler's cleanup. */
-function dropWorktree(ctx: Ctx, id: string): void {
+async function dropWorktree(ctx: Ctx, id: string): Promise<void> {
   try {
-    removeWorkspace(ctx, id);
+    await removeWorkspace(ctx, id);
   } catch (err) {
     console.warn(`[brain] could not remove the worktree of ${id}: ${(err as Error).message}`);
   }
@@ -46,7 +48,7 @@ export function merge(ctx: Ctx, id: string): TaskRow {
   const r = squashMerge(ctx, t);
   if (!r) throw conflict(`task ${id} has no branch to merge`);
   if ('merge' in r) recordEvent(ctx, id, 'task.merge_skipped', r);
-  dropWorktree(ctx, id);
+  void dropWorktree(ctx, id);
   return getTask(ctx, id);
 }
 
@@ -92,11 +94,21 @@ function squashMerge(ctx: Ctx, t: TaskRow): { merged_sha: string } | { merge: 'n
   return { merged_sha: sha };
 }
 
-/** Approve, then push the base branch when the project's push_policy is `after_merge`. A failed push does not undo the merge. */
-export async function approveAndPush(ctx: Ctx, id: string): Promise<TaskRow> {
-  const t = approve(ctx, id);
-  if (t.merged_sha && getProject(ctx, t.project_slug).push_policy === 'after_merge') return push(ctx, id);
-  return t;
+/**
+ * Approve (the merge happens now), then remove the worktree and push the base branch when the
+ * project's push_policy is `after_merge`. `task` is the approved task; `finished` resolves with it once
+ * the worktree is gone and the push is over. A failed push does not undo the merge.
+ */
+export function startApproval(ctx: Ctx, id: string): { task: TaskRow; finished: Promise<TaskRow> } {
+  const task = approve(ctx, id);
+  const pushing = task.merged_sha && getProject(ctx, task.project_slug).push_policy === 'after_merge' ? push(ctx, id) : null;
+  const finished = Promise.all([dropWorktree(ctx, id), pushing]).then(() => getTask(ctx, id));
+  return { task, finished };
+}
+
+/** Approve and wait for the worktree removal and the push (CLI, owner MCP). */
+export function approveAndPush(ctx: Ctx, id: string): Promise<TaskRow> {
+  return startApproval(ctx, id).finished;
 }
 
 /**
