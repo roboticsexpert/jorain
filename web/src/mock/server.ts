@@ -121,7 +121,7 @@ function portfolio(): Portfolio {
         cost_usd: { total: sum(runs), last_7_days: sum(recent) },
         runs: { total: runs.length, last_7_days: recent.length },
         last_activity: last,
-        planning: ts.some((t) => t.kind === 'plan' && ['todo', 'in_progress', 'waiting_for_human'].includes(t.status)),
+        planning: ts.some((t) => t.kind === 'plan' && !t.milestone_id && ['todo', 'in_progress', 'waiting_for_human'].includes(t.status)),
       };
     });
   const add = (f: (x: ProjectSummary) => number) => Math.round(projects.reduce((n, x) => n + f(x), 0) * 100) / 100;
@@ -523,7 +523,7 @@ function route(method: string, url: URL, body: Body): RawResponse {
   }
   if ((m = /^\/api\/projects\/([^/]+)\/plan$/.exec(p)) && method === 'POST') {
     const proj = findProject(decodeURIComponent(m[1]));
-    const open = db.tasks.find((t) => t.project_slug === proj.slug && t.kind === 'plan' && t.status !== 'done');
+    const open = db.tasks.find((t) => t.project_slug === proj.slug && t.kind === 'plan' && !t.milestone_id && t.status !== 'done');
     if (open) fail(409, 'conflict', `${proj.name} already has a planner task (${open.id}, ${open.status})`);
     const focus = String(body.focus ?? '').trim();
     const t: Task = {

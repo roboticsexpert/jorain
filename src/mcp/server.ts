@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { loadConfig } from '../config.ts';
 import { createCtx, type Ctx } from '../core/context.ts';
 import { saveNote, searchKnowledge, type Scope } from '../core/knowledge.ts';
-import { createMilestone, listMilestones } from '../core/milestones.ts';
+import { createMilestone, listMilestones, resolveMilestone, updateMilestone } from '../core/milestones.ts';
 import { siblings } from '../core/groups.ts';
 import { findProject, writeProjectDoc } from '../core/projects.ts';
 import { listMessages, postAgentMessage, takePending, waitReady } from '../core/messages.ts';
@@ -272,6 +272,21 @@ export function buildServer(ctx: Ctx, env: { taskId?: string; project?: string }
       return attempt(
         () => createMilestone(ctx, env.project!, { title, description, due: due ?? null, position }, env.taskId ? `agent:${env.taskId}` : 'agent'),
         (m) => `Created milestone ${m.id}: ${m.title}`,
+      );
+    },
+  );
+
+  server.registerTool(
+    'close_milestone',
+    {
+      description: "Mark a milestone of the current project done. Only after the owner agreed to close it (ask with ask_human first); never on your own judgement.",
+      inputSchema: { milestone: z.string().min(1).describe('The id or exact title of the milestone.') },
+    },
+    async ({ milestone }) => {
+      if (!env.project) return fail('No project is attached to this session.');
+      return attempt(
+        () => updateMilestone(ctx, resolveMilestone(ctx, env.project!, milestone).id, { status: 'done' }),
+        (m) => `Closed milestone ${m.id}: ${m.title}`,
       );
     },
   );

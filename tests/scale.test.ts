@@ -6,14 +6,14 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 import { listEvents } from '../src/core/events.ts';
 import { createMilestone, deleteMilestone, listMilestones, updateMilestone } from '../src/core/milestones.ts';
-import { createPlanTask, needsPlanning } from '../src/core/planning.ts';
+import { createMilestoneCheck, createPlanTask, milestonesToCheck, needsPlanning } from '../src/core/planning.ts';
 import { portfolio } from '../src/core/portfolio.ts';
 import { createProject, getProject, readProjectDoc, updateProject } from '../src/core/projects.ts';
 import { createTask, getTask, listTasks, transition } from '../src/core/tasks.ts';
 import { buildServer } from '../src/mcp/server.ts';
 import { approve } from '../src/runner/deliver.ts';
 import { Orchestrator } from '../src/runner/orchestrator.ts';
-import { initialPrompt, planPrompt } from '../src/runner/prompt.ts';
+import { initialPrompt, milestoneCheckPrompt, planPrompt } from '../src/runner/prompt.ts';
 import { Scheduler } from '../src/runner/scheduler.ts';
 import { ensureWorkspace, syncNote, syncWithBase } from '../src/runner/workspace.ts';
 import { gitOut, tempCtx, tempRepo } from './helpers.ts';
@@ -212,6 +212,65 @@ describe('milestones, planner and portfolio', { timeout: 30_000 }, () => {
     expect((await call('update_task', { id: work.id, priority: 1 })).text).toBe(`Task ${work.id} is blocked; only inbox and todo tasks can be changed here.`);
     const board = JSON.parse((await call('project_board', {})).text);
     expect(board.milestones.map((m: any) => m.title)).toEqual(['v1', 'v2']);
+  });
+
+  it('a milestone whose tasks are all done gets one check; new tasks in it re-arm the check', async () => {
+    const { ctx, orch } = setup();
+    const m = createMilestone(ctx, 'p', { title: 'v1', description: 'Users can sign up' });
+    createMilestone(ctx, 'p', { title: 'empty' });
+    const a = createTask(ctx, { project_slug: 'p', title: 'a', milestone: 'v1' });
+    const b = createTask(ctx, { project_slug: 'p', title: 'b', milestone: 'v1' });
+    ctx.db.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(a.id);
+    expect(milestonesToCheck(ctx, 'p')).toEqual([]);
+    ctx.db.prepare("UPDATE tasks SET status = 'done', result_summary = 'Sign-up form added' WHERE id = ?").run(b.id);
+    expect(milestonesToCheck(ctx, 'p')).toEqual([m.id]);
+
+    const plan = createPlanTask(ctx, 'p'); // a project planner does not block a milestone check, nor the other way round
+    const check = createMilestoneCheck(ctx, m.id);
+    expect(check).toMatchObject({ kind: 'plan', status: 'todo', milestone_id: m.id, title: 'Check milestone "v1"' });
+    expect(() => createMilestoneCheck(ctx, m.id)).toThrow(/already has a check/);
+    expect(milestonesToCheck(ctx, 'p')).toEqual([]);
+    expect(listMilestones(ctx, 'p')[0].total).toBe(2); // checks don't count as milestone work
+
+    const prompt = initialPrompt(ctx, getTask(ctx, check.id), getProject(ctx, 'p'));
+    expect(prompt).toBe(milestoneCheckPrompt(ctx, getTask(ctx, check.id), getProject(ctx, 'p')));
+    expect(prompt).toContain('# Check milestone "v1"');
+    expect(prompt).toContain('Users can sign up');
+    expect(prompt).toContain(`- ${b.id} [done] b\n  Result: Sign-up form added`);
+    expect(prompt).toContain(`${plan.id} [todo, planner]`);
+
+    // Done and nothing new: no second check.
+    ctx.db.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(check.id);
+    expect(milestonesToCheck(ctx, 'p')).toEqual([]);
+    // The check queued a missing piece; once it is done the milestone is checked again.
+    await new Promise((r) => setTimeout(r, 5));
+    const c = createTask(ctx, { project_slug: 'p', title: 'missing piece', milestone: 'v1' });
+    expect(milestonesToCheck(ctx, 'p')).toEqual([]);
+    ctx.db.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(c.id);
+    expect(milestonesToCheck(ctx, 'p')).toEqual([m.id]);
+    // Closed milestones are not checked.
+    updateMilestone(ctx, m.id, { status: 'done' });
+    expect(milestonesToCheck(ctx, 'p')).toEqual([]);
+    updateMilestone(ctx, m.id, { status: 'open' });
+
+    // The scheduler queues it (and starts it), for projects without auto_plan too.
+    ctx.db.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(plan.id);
+    new Scheduler(ctx, orch).tick();
+    const checks = listTasks(ctx, { project: 'p' }).filter((t) => t.kind === 'plan' && t.milestone_id === m.id);
+    expect(checks.map((t) => t.status)).toEqual(['in_progress', 'done']);
+    await orch.waitAll();
+
+    // close_milestone tool
+    const server = buildServer(ctx, { taskId: check.id, project: 'p' });
+    const [x, y] = InMemoryTransport.createLinkedPair();
+    await server.connect(x);
+    const client = new Client({ name: 'test', version: '0' });
+    await client.connect(y);
+    const r: any = await client.callTool({ name: 'close_milestone', arguments: { milestone: 'V1' } });
+    expect(r.content[0].text).toBe(`Closed milestone ${m.id}: v1`);
+    expect(listMilestones(ctx, 'p')[0].status).toBe('done');
+    const bad: any = await client.callTool({ name: 'close_milestone', arguments: { milestone: 'nope' } });
+    expect(bad.isError).toBe(true);
   });
 
   it('portfolio sums work, questions and cost per project', async () => {

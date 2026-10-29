@@ -142,6 +142,12 @@ export function VerifyBadge({ task }: { task: Task }) {
 /** A planner run: shapes the project (PROJECT.md, milestones, next tasks) instead of changing code. */
 export function PlannerBadge({ task }: { task: Task }) {
   if (task.kind !== 'plan') return null;
+  if (task.milestone_id)
+    return (
+      <span className="badge planner" title="Milestone check: all its tasks are done; queues what is missing or asks you to close the milestone">
+        🏁 milestone check
+      </span>
+    );
   return (
     <span className="badge planner" title="Planner task: updates PROJECT.md, milestones and queues the next tasks">
       🧭 planner

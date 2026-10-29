@@ -15,7 +15,7 @@ export interface ProjectSummary {
   cost_usd: { total: number; last_7_days: number };
   runs: { total: number; last_7_days: number };
   last_activity: string | null;
-  /** Whether a planner task is queued or running. */
+  /** Whether a project planner task is queued or running (milestone checks excluded). */
   planning: boolean;
 }
 
@@ -40,7 +40,7 @@ export function portfolio(ctx: Ctx, at = new Date()): Portfolio {
        FROM runs r JOIN tasks t ON t.id = r.task_id WHERE t.project_slug = ?`,
   );
   const activity = ctx.db.prepare(`SELECT MAX(updated_at) AS at FROM tasks WHERE project_slug = ?`);
-  const planning = ctx.db.prepare(`SELECT 1 FROM tasks WHERE project_slug = ? AND kind = 'plan' AND status IN ('todo','in_progress','waiting_for_human')`);
+  const planning = ctx.db.prepare(`SELECT 1 FROM tasks WHERE project_slug = ? AND kind = 'plan' AND milestone_id IS NULL AND status IN ('todo','in_progress','waiting_for_human')`);
 
   const rows: ProjectSummary[] = projects.map((p) => {
     const c: ProjectSummary['counts'] = {};

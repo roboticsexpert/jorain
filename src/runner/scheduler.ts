@@ -1,5 +1,5 @@
 import type { Ctx } from '../core/context.ts';
-import { createPlanTask, needsPlanning } from '../core/planning.ts';
+import { createMilestoneCheck, createPlanTask, milestonesToCheck, needsPlanning } from '../core/planning.ts';
 import { waitSatisfied } from '../core/messages.ts';
 import { listQuestions } from '../core/questions.ts';
 import { getProject, listProjects } from '../core/projects.ts';
@@ -11,8 +11,8 @@ import { removeWorkspace } from './workspace.ts';
 
 /**
  * Every tick: queue the tasks of schedules that are due, resume tasks whose questions are all answered
- * (e.g. answered from the CLI) or whose wait_for_owner is satisfied, queue a planner
- * task for auto_plan projects that ran out of work, start the highest-priority `todo` auto tasks while
+ * (e.g. answered from the CLI) or whose wait_for_owner is satisfied, queue a check for milestones whose
+ * tasks are all done, queue a planner task for auto_plan projects that ran out of work, start the highest-priority `todo` auto tasks while
  * global concurrency and each project's max_parallel allow, and remove worktrees of finished tasks.
  */
 export class Scheduler {
@@ -48,6 +48,7 @@ export class Scheduler {
     try {
       this.fireSchedules();
       this.resumeAnswered();
+      this.checkMilestones();
       this.autoPlan();
       const failed = new Set<string>();
       while (this.orch.runningCount() < this.ctx.cfg.concurrency) {
@@ -100,6 +101,17 @@ export class Scheduler {
       } catch (err) {
         if (err instanceof BrainError) this.warn(`resume:${t.id}`, `could not resume ${t.id}: ${err.message}`);
         else throw err;
+      }
+    }
+  }
+
+  /** Every active project, auto_plan or not: a finished milestone is checked against its goal. */
+  private checkMilestones(): void {
+    for (const p of listProjects(this.ctx)) {
+      if (p.status !== 'active') continue;
+      for (const id of milestonesToCheck(this.ctx, p.slug)) {
+        const t = createMilestoneCheck(this.ctx, id, { source: 'milestone_done' });
+        console.log(`[scheduler] ${p.slug}: all tasks of milestone ${id} are done: queued check ${t.id}`);
       }
     }
   }

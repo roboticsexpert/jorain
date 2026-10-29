@@ -256,6 +256,7 @@ How they fire (`src/core/schedules.ts`, every scheduler tick):
 - A planner task (`kind: 'plan'`) is an agent run that shapes the project instead of changing code: it asks the owner what is unclear, rewrites PROJECT.md, adds milestones and queues the next tasks in the inbox (with milestone and dependencies). It goes to `review` like any task; approve closes it.
 - Started by `POST /projects/:slug/plan`, or by the scheduler for `auto_plan` projects with no open work (no task in inbox/todo/in_progress/waiting_for_human/review), at most once per `BRAIN_PLAN_COOLDOWN_HOURS` (6).
 - Agent tools it uses: `update_project_doc`, `create_milestone`, `project_board`, `update_task` (dependencies, milestone, priority of inbox/todo tasks), `create_task` (`milestone`, `priority`; from a planner task follow-ups have no dependency by default).
+- **Milestone check**: a planner task with `milestone_id` set (title `Check milestone "<title>"`). The scheduler queues one (status `todo`, priority 3, every active project, `auto_plan` or not) when every work task of an open milestone is `done`, no check of it is unfinished, and no check was created since the newest task of the milestone. The agent compares the milestone description with the repository: if something is missing it queues tasks in the milestone (inbox); if it is met it asks the owner (`ask_human`) and, on yes, calls `close_milestone({ milestone })`. A check does not block a project planner (409 only for another project planner) and is not counted in `portfolio.planning`.
 
 ### Dependencies
 

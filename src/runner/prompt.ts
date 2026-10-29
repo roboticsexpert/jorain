@@ -123,7 +123,7 @@ export function threadSoFar(ctx: Ctx, taskId: string): string {
 }
 
 export function initialPrompt(ctx: Ctx, task: TaskRow, project: Project, note?: string | null): string {
-  if (task.kind === 'plan') return planPrompt(ctx, task, project, note);
+  if (task.kind === 'plan') return task.milestone_id ? milestoneCheckPrompt(ctx, task, project, note) : planPrompt(ctx, task, project, note);
   const sections = [`# Task: ${task.title}`, '', task.body.trim() || '_(no description)_'];
   if (note) sections.unshift('> ' + note, '');
   const milestone = task.milestone_id ? findMilestone(ctx, task.milestone_id) : undefined;
@@ -145,7 +145,7 @@ export function boardSummary(ctx: Ctx, project: Project, skip: string): string {
   const open = tasks.filter((t) => t.status !== 'done');
   const recent = tasks.filter((t) => t.status === 'done').slice(0, 15);
   const line = (t: TaskRow) =>
-    `- ${t.id} [${t.status}${t.kind === 'plan' ? ', planner' : ''}] ${t.title}${t.milestone_id ? ` (milestone: ${milestones.get(t.milestone_id) ?? t.milestone_id})` : ''}${t.depends_on.length ? ` (depends on ${t.depends_on.join(', ')})` : ''}`;
+    `- ${t.id} [${t.status}${t.kind === 'plan' ? (t.milestone_id ? ', milestone check' : ', planner') : ''}] ${t.title}${t.milestone_id ? ` (milestone: ${milestones.get(t.milestone_id) ?? t.milestone_id})` : ''}${t.depends_on.length ? ` (depends on ${t.depends_on.join(', ')})` : ''}`;
   return [
     '### Open tasks',
     open.length ? open.map(line).join('\n') : '_(none)_',
@@ -203,6 +203,50 @@ export function planPrompt(ctx: Ctx, task: TaskRow, project: Project, note?: str
   if (thread) sections.push('', '## Conversation with the owner so far', '', thread);
   return sections.join('\n');
 }
+
+/**
+ * Prompt of a milestone check: every task of the milestone is done; decide whether its goal is met. If not,
+ * queue tasks for what is missing; if it is, ask the owner whether to close it.
+ */
+export function milestoneCheckPrompt(ctx: Ctx, task: TaskRow, project: Project, note?: string | null): string {
+  const m = findMilestone(ctx, task.milestone_id!)!;
+  const tasks = listTasks(ctx, { project: project.slug }).filter((t) => t.milestone_id === m.id && t.kind === 'work').reverse();
+  const sections = [
+    `# Check milestone "${m.title}" of project "${project.name}"`,
+    '',
+    'Every task of this milestone is done. Your job is to decide whether the milestone itself is met: whether what its description promises is actually true now, not just whether its tasks were closed. Do not change code.',
+    '',
+    'Do this:',
+    project.repo_path
+      ? '1. Compare the milestone description below with the real state of the repository (code, docs, git log of the merged tasks). Build and run the tests or the app if that helps you judge, but do not edit or commit anything.'
+      : '1. Compare the milestone description below with the real state of the project folder and the results of its tasks.',
+    '2. If anything the milestone promises is missing, broken or only partly done, create tasks for it with mcp__brain__create_task (milestone: this one, small enough for one agent session, with acceptance criteria, depends_on to wire their order). Check the board first and do not duplicate open tasks. Do not close the milestone and do not ask the owner to close it.',
+    '3. If the milestone is met, ask the owner with mcp__brain__ask_human whether to close it: say in a few lines why you think it is done (what you checked), with the options "Close it" and "Keep it open". If they agree, close it with mcp__brain__close_milestone. If they keep it open and say what is missing, create tasks for that as in step 2.',
+    '4. If the description is too vague to judge, ask the owner what "done" means for this milestone instead of guessing.',
+    '5. End with a short summary: met or not, the evidence, and the tasks you queued or whether the milestone was closed.',
+  ];
+  if (note) sections.unshift('> ' + note, '');
+  if (m.status === 'done') sections.push('', 'Note: the owner has already closed this milestone. Only queue tasks if something it promises is clearly broken.');
+  sections.push('', `## Milestone: ${m.title}`, '', m.description.trim() || '_(no description)_');
+  if (m.due) sections.push('', `Due: ${m.due}`);
+  sections.push(
+    '',
+    '## Its tasks',
+    '',
+    tasks.map((t) => `- ${t.id} [${t.status}] ${t.title}${t.result_summary?.trim() ? `\n  Result: ${clip(t.result_summary.trim(), 600).replace(/\n/g, ' ')}` : ''}`).join('\n') || '_(none)_',
+  );
+  const projectMd = readProjectFile(ctx, project.slug, 'PROJECT.md');
+  sections.push('', '## PROJECT.md', '', projectMd?.trim() || '_(empty)_');
+  sections.push(...groupSection(ctx, project));
+  sections.push('', '## Board', '', boardSummary(ctx, project, task.id));
+  const indexFile = path.join(ctx.cfg.brainDir, 'knowledge', 'index.md');
+  if (existsSync(indexFile)) sections.push('', '## Knowledge index (global)', '', readFileSync(indexFile, 'utf8').trim());
+  const thread = threadSoFar(ctx, task.id);
+  if (thread) sections.push('', '## Conversation with the owner so far', '', thread);
+  return sections.join('\n');
+}
+
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 /** System prompt of a task composer chat (docs/08-task-composer.md), rebuilt every turn so the board is current. */
 export function composerPrompt(ctx: Ctx, project: Project): string {
